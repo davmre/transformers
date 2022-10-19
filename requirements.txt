@@ -1,0 +1,8 @@
+wheel
+toml
+numpy
+jax
+absl-py>=1.0.0
+flax>=0.4.1
+optax>=0.1.1
+transformers[sentencepiece]

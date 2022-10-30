@@ -7,9 +7,12 @@ import jax
 from jax import numpy as jnp
 import numpy as np
 
+from flax import linen as nn
+
 from daves_transformer_lib import transformer_lib
 
-class AgentLibTests(test_util.TestCase):
+
+class AgentLibTests(parameterized.TestCase):
 
     def test_build_encoder(self):
         n = 7
@@ -19,21 +22,30 @@ class AgentLibTests(test_util.TestCase):
         d_ff = 32
         num_layers = 2
         dropout_rate = 0.1
-        
+
         def build_layer():
+            dropout = nn.Dropout(dropout_rate, deterministic=False)
+
             return transformer_lib.EncoderLayer(
                 size=d_model,
-                self_attn=transformer_lib.MultiHeadedAttention(h, d_model),
+                self_attn=transformer_lib.MultiHeadedAttention(h,
+                                                               d_model,
+                                                               dropout=dropout),
                 feed_forward=transformer_lib.PositionwiseFeedForward(
-                    d_model, d_ff, dropout_rate),
-                dropout_rate=dropout_rate)
-        
-        encoder = transformer_lib.Encoder(
-            features=d_model,
-            num_layers=num_layers,
-            layer_fn=build_layer)
-        
-        x = jnp.random.normal(jax.random.PRNGKey(42), [n, d_model])
-        
-        weights = encoder.init(x)
+                    d_model, d_ff, dropout=dropout),
+                dropout=dropout)
+
+        encoder = transformer_lib.Encoder(features=d_model,
+                                          num_layers=num_layers,
+                                          layer_fn=build_layer)
+
+        x = jax.random.normal(jax.random.PRNGKey(42), [n, d_model])
+
+        rngs = {
+            'params': jax.random.PRNGKey(0),
+            'dropout': jax.random.PRNGKey(1)
+        }
+        weights = encoder.init(rngs, x)
         print("WEIHTS", weights)
+        y = encoder.apply(weights, x, rngs=rngs)
+        print("RESULT Y", y, y.shape)

@@ -32,7 +32,7 @@ class Generator(nn.Module):
     proj: nn.Module
 
     def __call__(self, x):
-        return jax.nn.log_softmax(self.proj(x), dim=-1)
+        return jax.nn.log_softmax(self.proj(x), axis=-1)
 
 
 class Encoder(nn.Module):
@@ -46,9 +46,9 @@ class Encoder(nn.Module):
         self.layers = [self.layer_fn() for _ in range(self.num_layers)]
         self.norm = LayerNorm(self.features)
 
-    def __call__(self, x, mask):
+    def __call__(self, x, mask=None):
         for layer in self.layers:
-            x = self.layer(x, mask)
+            x = layer(x, mask)
         return self.norm(x)
 
 
@@ -63,8 +63,8 @@ class LayerNorm(nn.Module):
                               (self.features,))
 
     def __call__(self, x):
-        mean = jnp.mean(x, axis=-1)
-        std = jnp.std(x, axis=-1)
+        mean = jnp.mean(x, axis=-1, keepdims=True)
+        std = jnp.std(x, axis=-1, keepdims=True)
 
         return self.a_2 * (x - mean) / (std + self.eps) + self.b_2
 
@@ -75,11 +75,10 @@ class SublayerConnection(nn.Module):
     Note for code simplicity the norm is first as opposed to last.
     """
     size: int
-    dropout_rate: float
+    dropout: nn.Module
 
     def setup(self):
         self.norm = LayerNorm(self.size)
-        self.dropout = nn.Dropout(self.dropout_rate)
 
     def __call__(self, x, sublayer: Callable):
         return x + self.dropout(sublayer(self.norm(x)))
@@ -89,16 +88,17 @@ class EncoderLayer(nn.Module):
     size: int
     self_attn: nn.Module
     feed_forward: nn.Module
-    dropout_rate: float
+    dropout: nn.Module
 
     def setup(self):
-        self.attn_sublayer = SublayerConnection(self.size,
-                                                dropout_rate=self.dropout_rate)
-        self.feed_forward_sublayer = SublayerConnection(
-            self.size, dropout_rate=self.dropout_rate)
+        self.attn_sublayer = SublayerConnection(self.size, dropout=self.dropout)
+        self.feed_forward_sublayer = SublayerConnection(self.size,
+                                                        dropout=self.dropout)
 
     def __call__(self, x, mask):
-        x = self.attn_sublayer(x, lambda x: self.self_attn(x, x, x, mask))
+        print('encoder layer with x', x.shape)
+        x = self.attn_sublayer(x,
+                               sublayer=lambda x: self.self_attn(x, x, x, mask))
         return self.feed_forward_sublayer(x, self.feed_forward)
 
 
@@ -118,7 +118,7 @@ class MultiHeadedAttention(nn.Module):
 
     h: int
     d_model: int
-    dropout_rate: float = 0.1
+    dropout: nn.Module
 
     def setup(self):
         self.d_k = self.d_model // self.h
@@ -126,11 +126,9 @@ class MultiHeadedAttention(nn.Module):
             self.query_linear, self.key_linear, self.value_linear,
             self.final_linear
         ] = [
-            nn.Dense(self.d_model, kernel_init=nn.initializers.xavier_uniform)
+            nn.Dense(self.d_model, kernel_init=nn.initializers.xavier_uniform())
             for _ in range(4)
         ]
-        self.attn = None
-        self.dropout = nn.Dropout(self.dropout_rate)
 
     def __call__(self, query, key, value, mask=None):
         if mask is not None:
@@ -143,13 +141,13 @@ class MultiHeadedAttention(nn.Module):
         value = self.value_linear(value)
         # Convert to shape [h, n, d_k].
         query, key, value = [
-            jnp.transpose(jnp.reshape(t, [-1, self.h, self.d_k]), (0, 1))
+            jnp.transpose(jnp.reshape(t, [-1, self.h, self.d_k]), (1, 0, 2))
             for t in (query, key, value)
         ]
 
-        x, self.attn = attention(query, key, value, dropout=self.dropout)
+        x, _ = attention(query, key, value, dropout=self.dropout)
         # x shape [h, n, d_k] -> [n, h * d_k]
-        x = jnp.reshape(jnp.transpose(x, (0, 1)), (-1, self.h * self.d_k))
+        x = jnp.reshape(jnp.transpose(x, (1, 0, 2)), (-1, self.h * self.d_k))
         return self.final_linear(x)
 
 
@@ -157,54 +155,13 @@ class PositionwiseFeedForward(nn.Module):
     "Implements FFN equation."
     d_model: int
     d_ff: int
-    dropout_rate: float = 0.1
+    dropout: nn.Module
 
     def setup(self):
         self.w_1 = nn.Dense(self.d_ff,
-                            kernel_init=nn.initializers.xavier_uniform)
+                            kernel_init=nn.initializers.xavier_uniform())
         self.w_2 = nn.Dense(self.d_model,
-                            kernel_init=nn.initializers.xavier_uniform)
-        self.dropout = nn.Dropout(self.dropout_rate)
+                            kernel_init=nn.initializers.xavier_uniform())
 
-    def _call__(self, x):
+    def __call__(self, x):
         return self.w_2(self.dropout(jax.nn.relu(self.w_1(x))))
-
-
-def make_model(src_vocab,
-               tgt_vocab,
-               N=6,
-               d_model=512,
-               d_ff=2048,
-               h=8,
-               dropout_rate=0.1):
-    "Helper: Construct a model from hyperparameters."
-    model = EncoderDecoder(
-        Encoder(features=d_model,
-                num_layers=N,
-                layer_fn=lambda: EncoderLayer(
-                    size=d_model,
-                    self_attn=MultiHeadedAttention(h, d_model),
-                    feed_forward=PositionwiseFeedForward(
-                        d_model, d_ff, dropout_rate),
-                    dropout_rate=dropout_rate)),
-        Decoder(features=d_model,
-                num_layers=N,
-                layer_fn=lambda: DecoderLayer(
-                    size=d_model,
-                    self_attn=MultiHeadedAttention(h, d_model),
-                    feed_forward=PositionwiseFeedForward(
-                        d_model, d_ff, dropout_rate),
-                    dropout_rate=dropout_rate)),
-        src_embed=nn.Sequential(Embeddings(d_model, src_vocab),
-                                PositionalEncoding(d_model, dropout)),
-        tgt_embed=nn.Sequential(Embeddings(d_model, tgt_vocab),
-                                PositionalEncoding(d_model, dropout)),
-        generator=Generator(d_model, tgt_vocab),
-    )
-
-    # This was important from their code.
-    # Initialize parameters with Glorot / fan_avg.
-    for p in model.parameters():
-        if p.dim() > 1:
-            nn.init.xavier_uniform_(p)
-    return model

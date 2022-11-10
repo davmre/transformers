@@ -12,9 +12,17 @@ from flax import linen as nn
 from daves_transformer_lib import transformer_lib
 
 
-class AgentLibTests(parameterized.TestCase):
+class TransformerTests(parameterized.TestCase):
 
-    def test_build_encoder(self):
+    @parameterized.parameters([
+        {
+            'batch_shape': []
+        },
+        {
+            'batch_shape': [3]
+        },
+    ])
+    def test_build_encoder(self, batch_shape):
         n = 7
         h = 2
         d_k = 8
@@ -39,7 +47,8 @@ class AgentLibTests(parameterized.TestCase):
                                           num_layers=num_layers,
                                           layer_fn=build_layer)
 
-        x = jax.random.normal(jax.random.PRNGKey(42), [n, d_model])
+        x = jax.random.normal(jax.random.PRNGKey(42),
+                              batch_shape + [n, d_model])
 
         rngs = {
             'params': jax.random.PRNGKey(0),

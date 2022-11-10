@@ -96,7 +96,6 @@ class EncoderLayer(nn.Module):
                                                         dropout=self.dropout)
 
     def __call__(self, x, mask):
-        print('encoder layer with x', x.shape)
         x = self.attn_sublayer(x,
                                sublayer=lambda x: self.self_attn(x, x, x, mask))
         return self.feed_forward_sublayer(x, self.feed_forward)
@@ -139,6 +138,8 @@ class MultiHeadedAttention(nn.Module):
         query = self.query_linear(query)
         key = self.key_linear(key)
         value = self.value_linear(value)
+        orig_shape = query.shape
+
         # Convert to shape [h, n, d_k].
         query, key, value = [
             jnp.transpose(jnp.reshape(t, [-1, self.h, self.d_k]), (1, 0, 2))
@@ -147,7 +148,7 @@ class MultiHeadedAttention(nn.Module):
 
         x, _ = attention(query, key, value, dropout=self.dropout)
         # x shape [h, n, d_k] -> [n, h * d_k]
-        x = jnp.reshape(jnp.transpose(x, (1, 0, 2)), (-1, self.h * self.d_k))
+        x = jnp.reshape(jnp.transpose(x, (1, 0, 2)), orig_shape)
         return self.final_linear(x)
 
 

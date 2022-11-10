@@ -1,3 +1,5 @@
+from re import X
+
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -6,6 +8,7 @@ from jax import numpy as jnp
 import numpy as np
 
 from flax import linen as nn
+import optax
 
 from daves_transformer_lib import addition_task
 
@@ -56,3 +59,50 @@ class AdditionTests(parameterized.TestCase):
                 z = np.where(z > 1, 0, z) + jnp.concatenate(
                     [carry[1:], jnp.asarray([0])])
             np.testing.assert_array_equal(z, y)
+
+    def test_addition_model_runs(self):
+        model = addition_task.AdditionModel(num_heads=2,
+                                            num_iters=3,
+                                            d_head=3,
+                                            d_ff=13,
+                                            dropout=nn.Dropout(
+                                                rate=0., deterministic=True))
+        key = jax.random.PRNGKey(0)
+        g = addition_task.data_generator(key, batch_size=1, num_bits=16)
+        xs, y = next(g)
+
+        weights = model.init(key, xs)
+        xxs = model.apply(weights, xs)[..., 0]
+        self.assertEqual(xxs.shape, y.shape)
+
+    def test_addition_model_trains(self):
+        model = addition_task.AdditionModel(num_heads=2,
+                                            num_iters=3,
+                                            d_head=3,
+                                            d_ff=13,
+                                            dropout=nn.Dropout(
+                                                rate=0., deterministic=True))
+        key = jax.random.PRNGKey(0)
+        g = addition_task.data_generator(key, batch_size=1, num_bits=16)
+
+        init_xs, _ = next(g)
+        weights = model.init(key, init_xs)
+
+        opt = optax.adam(0.1)
+        opt_state = opt.init(weights)
+
+        def loss_fn(weights):
+            xs, y = next(g)
+            xxs = model.apply(weights, xs)
+            return jnp.mean(jnp.sum((y - xxs[..., 0])**2, axis=-1), axis=0)
+
+        @jax.jit
+        def train_step(weights, opt_state):
+            loss, grad = jax.value_and_grad(loss_fn)(weights)
+            updates, opt_state = opt.update(grad, opt_state)
+            weights = optax.apply_updates(weights, updates)
+            return loss, weights, opt_state
+
+        for step in range(100):
+            loss, weights, opt_state = train_step(weights, opt_state)
+            print(f"step {step} loss {loss}")

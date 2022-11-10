@@ -8,6 +8,8 @@ from jax import numpy as jnp
 from flax import linen as nn
 from flax import struct
 
+from daves_transformer_lib import transformer_lib
+
 
 @struct.dataclass
 class ArithmeticProblem:
@@ -51,3 +53,34 @@ def binary_encoding_to_int(x):
     num_bits = x.shape[-1]
     powers_of_two = 2**jnp.arange(num_bits)[::-1]
     return sum(x * powers_of_two)
+
+
+class AdditionModel(nn.Module):
+    num_heads: int
+    num_iters: int
+    d_head: int
+    d_ff: int
+    dropout: nn.Module
+    internal_dtype = jnp.float32
+
+    @nn.compact
+    def __call__(self, xs):
+        d_model = self.d_head * self.num_heads
+        num_bits = xs.shape[-2]
+
+        positions = self.param('position_embeddings', jax.random.normal,
+                               (num_bits, d_model))
+        zs = nn.Dense(d_model, dtype=self.internal_dtype)(xs) + positions
+
+        transformer_layer = transformer_lib.EncoderLayer(
+            size=d_model,
+            self_attn=transformer_lib.MultiHeadedAttention(
+                self.num_heads, d_model, dropout=self.dropout),
+            feed_forward=transformer_lib.PositionwiseFeedForward(
+                d_model, self.d_ff, dropout=self.dropout),
+            dropout=self.dropout)
+        for _ in range(self.num_iters):
+            zs = transformer_layer(zs, mask=None)
+
+        ys = nn.Dense(1, dtype=self.internal_dtype)(zs)
+        return ys

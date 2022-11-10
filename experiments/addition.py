@@ -1,7 +1,6 @@
 from re import X
 
-from absl.testing import absltest
-from absl.testing import parameterized
+import tensorboard
 
 import jax
 from jax import numpy as jnp
@@ -20,6 +19,7 @@ d_ff = 256
 dropout_rate = 0.0
 batch_size = 64
 learning_rate = 0.1
+logdir = '/tmp/addition_logs'
 
 key = jax.random.PRNGKey(0)
 
@@ -56,6 +56,8 @@ def train_step(weights, opt_state):
     return loss, weights, opt_state
 
 
+writer = tensorboard.SummaryWriter(logdir)
 for step in range(100):
     loss, weights, opt_state = train_step(weights, opt_state)
     print(f"step {step} loss {loss}")
+    writer.add_scalar('train/loss', loss, step)

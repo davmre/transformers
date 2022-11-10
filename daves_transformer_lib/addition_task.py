@@ -1,9 +1,12 @@
 from enum import Enum
 import math
+from sys import float_info
+from sys import int_info
 from typing import Callable, List
 
 import jax
 from jax import numpy as jnp
+import numpy as np
 
 from flax import linen as nn
 from flax import struct
@@ -22,11 +25,20 @@ class ArithmeticProblem:
         return self.op(self.a, self.b)
 
 
-def random_addition_problems(key, batch_size, max_input=2**8, min_input=0):
+def random_addition_problems(key,
+                             batch_size,
+                             max_input=2**8,
+                             min_input=0,
+                             dtype=jnp.int32):
+    if max_input > np.iinfo(dtype).max:
+        raise ValueError(
+            f'Max input {max_input} is too large for dtype {dtype}')
+
     inputs = jax.random.randint(key,
                                 shape=[2, batch_size],
                                 minval=min_input,
-                                maxval=max_input)
+                                maxval=max_input,
+                                dtype=dtype)
     return ArithmeticProblem(a=inputs[0], b=inputs[1], op=lambda a, b: a + b)
 
 

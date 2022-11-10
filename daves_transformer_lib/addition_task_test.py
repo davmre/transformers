@@ -1,5 +1,3 @@
-from re import X
-
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -68,7 +66,7 @@ class AdditionTests(parameterized.TestCase):
                                             dropout=nn.Dropout(
                                                 rate=0., deterministic=True))
         key = jax.random.PRNGKey(0)
-        g = addition_task.data_generator(key, batch_size=1, num_bits=16)
+        g = addition_task.data_generator(key, batch_size=7, num_bits=16)
         xs, y = next(g)
 
         weights = model.init(key, xs)

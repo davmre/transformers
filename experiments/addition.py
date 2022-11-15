@@ -11,6 +11,7 @@ from jax import numpy as jnp
 import numpy as np
 
 from flax import linen as nn
+from flax.training import checkpoints
 from flax.training import train_state
 import optax
 
@@ -28,13 +29,14 @@ config.dropout_rate = 0.0
 config.batch_size = 64
 config.learning_rate = 1e-4
 config.num_train_steps = 6
+config.resume_from_checkpoint = -1
+config.checkpoint_dir = '/tmp/addition_checkpoints'
 config.logdir = '/tmp/addition_logs'
 _CONFIG = config_flags.DEFINE_config_dict('my_config', config)
 
 
-def init_train_state(key, model, init_xs, config):
+def init_train_state(key, model, init_xs, opt):
     weights = model.init(key, init_xs[0, ...])
-    opt = optax.adam(config.learning_rate)
     return train_state.TrainState(step=0,
                                   apply_fn=model.apply,
                                   params=weights,
@@ -59,11 +61,14 @@ def main(_):
                                      batch_size=config.batch_size,
                                      num_bits=config.num_bits)
 
+    opt = optax.adam(config.learning_rate)
     init_xs, _ = next(g)
-    state = init_train_state(weights_key,
-                             model=model,
-                             init_xs=init_xs,
-                             config=config)
+    state = init_train_state(weights_key, model=model, init_xs=init_xs, opt=opt)
+    if config.resume_from_checkpoint > 0:
+        state = checkpoints.restore_checkpoint(
+            config.checkpoint_dir,
+            target=state,
+            step=config.resume_from_checkpoint)
 
     def loss_fn(weights):
         xs, y = next(g)
@@ -79,10 +84,13 @@ def main(_):
         return loss, aux, state
 
     writer = tensorboardX.SummaryWriter(logdir=config.logdir)
-    for step in range(config.num_train_steps):
+    for _ in range(config.num_train_steps):
         loss, aux, state = train_step(state)
         writer.add_scalar('train/loss', loss, state.step)
-        print(f"step {step} loss {loss}")
+        print(f"step {state.step} loss {loss}")
+        _ = checkpoints.save_checkpoint(config.checkpoint_dir,
+                                        target=state,
+                                        step=state.step)
     writer.flush()
 
 

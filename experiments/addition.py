@@ -11,7 +11,7 @@ from jax import numpy as jnp
 import numpy as np
 
 from flax import linen as nn
-from flax.training import checkpoints
+# from flax.training import checkpoints
 from flax.training import train_state
 import optax
 
@@ -64,11 +64,12 @@ def main(_):
     opt = optax.adam(config.learning_rate)
     init_xs, _ = next(g)
     state = init_train_state(weights_key, model=model, init_xs=init_xs, opt=opt)
-    if config.resume_from_checkpoint > 0:
-        state = checkpoints.restore_checkpoint(
-            config.checkpoint_dir,
-            target=state,
-            step=config.resume_from_checkpoint)
+
+    #if config.resume_from_checkpoint > 0:
+    #    state = checkpoints.restore_checkpoint(
+    #        config.checkpoint_dir,
+    #        target=state,
+    #        step=config.resume_from_checkpoint)
 
     def loss_fn(weights):
         xs, y = next(g)
@@ -88,9 +89,9 @@ def main(_):
         loss, aux, state = train_step(state)
         writer.add_scalar('train/loss', loss, state.step)
         print(f"step {state.step} loss {loss}")
-        _ = checkpoints.save_checkpoint(config.checkpoint_dir,
-                                        target=state,
-                                        step=state.step)
+        #_ = checkpoints.save_checkpoint(config.checkpoint_dir,
+        #                                target=state,
+        #                                step=state.step)
     writer.flush()
 
 

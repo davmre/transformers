@@ -22,7 +22,8 @@ jobs:
     uses: script@v1
     with:
       script: |-
-        pip install -r /inputs/repo/requirements.txt
+        pip install --upgrade -r /inputs/repo/requirements.txt
+        pip install tensorboardX
         pip install -e /inputs/repo/
         cp -R /inputs/repo /transformers
         python /transformers/experiments/addition.py

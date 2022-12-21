@@ -11,7 +11,7 @@ jobs:
         type: volume
     uses: git-checkout@v1
     with:
-      url: context.event.github.url
+      url: https://github.com/davmre/transformers
   TrainAddition:
     resources:
       instance-type: C5

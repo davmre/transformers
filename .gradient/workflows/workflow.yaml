@@ -5,7 +5,7 @@
 jobs:
   CloneRepo:
     resources:
-      instance-type: C5
+      instance-type: C4
     outputs:
       repo:
         type: volume
@@ -14,7 +14,7 @@ jobs:
       url: https://github.com/davmre/transformers
   TrainAddition:
     resources:
-      instance-type: C5
+      instance-type: C4
     needs:
       - CloneRepo
     inputs:

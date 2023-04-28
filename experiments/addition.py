@@ -16,9 +16,10 @@ from flax.training import train_state
 import optax
 
 from daves_transformer_lib import addition_task
+from daves_transformer_lib import train
 
 # Example invocation:
-# `python3 experiments/addition.py --my_config.num_train_steps=4``
+# `python3 experiments/addition.py --ml_config.num_train_steps=4``
 config = config_dict.ConfigDict()
 config.num_bits = 31  # TODO: support signed ints for full int32.
 config.num_iters = 8
@@ -30,9 +31,10 @@ config.batch_size = 64
 config.learning_rate = 1e-4
 config.num_train_steps = 6
 config.resume_from_checkpoint = -1
+config.seed = 0
 config.checkpoint_dir = '/tmp/addition_checkpoints'
 config.logdir = '/tmp/addition_logs'
-_CONFIG = config_flags.DEFINE_config_dict('my_config', config)
+_CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
 
 
 def init_train_state(key, model, init_xs, opt):
@@ -44,11 +46,16 @@ def init_train_state(key, model, init_xs, opt):
                                   opt_state=opt.init(weights))
 
 
+def squared_loss(y, y_pred):
+    y_pred = y_pred[..., 0]  # TODO: put this somewhere more principled?
+    return jnp.mean(jnp.sum((y - y_pred)**2, axis=-1), axis=0)
+
+
 def main(_):
     config = _CONFIG.value
     key = jax.random.PRNGKey(0)
 
-    data_key, weights_key, dropout_key = jax.random.split(key, 3)
+    data_key, train_key = jax.random.split(key)
 
     model = addition_task.AdditionModel(num_heads=config.num_heads,
                                         num_iters=config.num_iters,
@@ -61,39 +68,15 @@ def main(_):
                                      batch_size=config.batch_size,
                                      num_bits=config.num_bits)
 
-    opt = optax.adam(config.learning_rate)
-    init_xs, _ = next(g)
-    state = init_train_state(weights_key, model=model, init_xs=init_xs, opt=opt)
-
-    #if config.resume_from_checkpoint > 0:
-    #    state = checkpoints.restore_checkpoint(
-    #        config.checkpoint_dir,
-    #        target=state,
-    #        step=config.resume_from_checkpoint)
-
-    def loss_fn(weights):
-        xs, y = next(g)
-        xxs = model.apply(weights, xs)[..., 0]
-        sq_loss = jnp.mean(jnp.sum((y - xxs)**2, axis=-1), axis=0)
-        return sq_loss, (xs, y, xxs)
-
-    @jax.jit
-    def train_step(state: train_state.TrainState):
-        (loss, aux), grad = jax.value_and_grad(loss_fn,
-                                               has_aux=True)(state.params)
-        state = state.apply_gradients(grads=grad)
-        return loss, aux, state
-
-    writer = tensorboardX.SummaryWriter(logdir=config.logdir)
-    for _ in range(config.num_train_steps):
-        loss, aux, state = train_step(state)
-        writer.add_scalar('train/loss', loss, state.step)
-        print(f"step {state.step} loss {loss}")
-        #_ = checkpoints.save_checkpoint(config.checkpoint_dir,
-        #                                target=state,
-        #                                step=state.step)
-    writer.flush()
+    trainer = train.Trainer(config=config,
+                            model=model,
+                            optimizer=optax.adam(3e-3),
+                            data_generator=g,
+                            loss_fn=squared_loss)
+    trainer.run(train_key)
 
 
 if __name__ == '__main__':
+    import sys
+    print("ARGV", sys.argv)
     app.run(main)

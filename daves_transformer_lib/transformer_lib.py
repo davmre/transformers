@@ -1,3 +1,4 @@
+import functools
 from typing import Callable, List
 
 import jax
@@ -6,33 +7,11 @@ from jax import numpy as jnp
 from flax import linen as nn
 
 
-class EncoderDecoder(nn.Module):
-
-    encoder: nn.Module
-    decoder: nn.Module
-    src_embed: Callable
-    tgt_embed: Callable
-    generator: nn.Module
-
-    def __call__(self, src, tgt, src_mask, tgt_mask):
-        return self.decode(self.encode(src, src_mask), src_mask, tgt, tgt_mask)
-
-    def encode(self, src, src_mask):
-        return self.encoder(self.src_embed(src), src_mask)
-
-    def decode(self, memory, src_mask, tgt, tgt_mask):
-        return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)
-
-
-class Generator(nn.Module):
-
-    #d_model: int
-    #vocab: Any  # TODO: what is this and how to build it??
-
-    proj: nn.Module
-
-    def __call__(self, x):
-        return jax.nn.log_softmax(self.proj(x), axis=-1)
+def causal_dependence(num_positions):
+    #r = jnp.arange(num_positions)
+    # rows index outputs, columns inputs
+    return jnp.tril(jnp.ones([num_positions,
+                              num_positions]))  #r[:, jnp.newaxis] >= r
 
 
 class Encoder(nn.Module):
@@ -44,29 +23,12 @@ class Encoder(nn.Module):
 
     def setup(self):
         self.layers = [self.layer_fn() for _ in range(self.num_layers)]
-        self.norm = LayerNorm(self.features)
+        self.norm = nn.LayerNorm()
 
     def __call__(self, x, mask=None):
         for layer in self.layers:
             x = layer(x, mask)
         return self.norm(x)
-
-
-class LayerNorm(nn.Module):
-
-    features: int
-    eps: float = 1e-6
-
-    def setup(self):
-        self.a_2 = self.param('a_2', lambda k, s: jnp.ones(s), (self.features,))
-        self.b_2 = self.param('b_2', lambda k, s: jnp.zeros(s),
-                              (self.features,))
-
-    def __call__(self, x):
-        mean = jnp.mean(x, axis=-1, keepdims=True)
-        std = jnp.std(x, axis=-1, keepdims=True)
-
-        return self.a_2 * (x - mean) / (std + self.eps) + self.b_2
 
 
 class SublayerConnection(nn.Module):
@@ -78,7 +40,7 @@ class SublayerConnection(nn.Module):
     dropout: nn.Module
 
     def setup(self):
-        self.norm = LayerNorm(self.size)
+        self.norm = nn.LayerNorm()
 
     def __call__(self, x, sublayer: Callable):
         return x + self.dropout(sublayer(self.norm(x)))
@@ -125,31 +87,30 @@ class MultiHeadedAttention(nn.Module):
             self.query_linear, self.key_linear, self.value_linear,
             self.final_linear
         ] = [
-            nn.Dense(self.d_model, kernel_init=nn.initializers.xavier_uniform())
+            nn.Dense(self.d_model, kernel_init=nn.initializers.normal(0.02))
             for _ in range(4)
         ]
 
     def __call__(self, query, key, value, mask=None):
-        if mask is not None:
-            # Same mask applied to all `h` heads.
-            mask = mask[:, None, :]
+        # q, k, v all have shape [..., n, h * d_k].
 
-        # q, k, v all have shape [n, h * d_k].
         query = self.query_linear(query)
         key = self.key_linear(key)
         value = self.value_linear(value)
-        orig_shape = query.shape
 
-        # Convert to shape [h, n, d_k].
-        query, key, value = [
-            jnp.transpose(jnp.reshape(t, [-1, self.h, self.d_k]), (1, 0, 2))
-            for t in (query, key, value)
-        ]
+        @functools.partial(jnp.vectorize, signature='(n,m),(n,m),(n,m)->(n,m)')
+        def do_attention(q, k, v):
+            # Convert to shape [..., h, n, d_k].
+            orig_shape = q.shape
+            q, k, v = [
+                jnp.transpose(jnp.reshape(t, [-1, self.h, self.d_k]), (1, 0, 2))
+                for t in (q, k, v)
+            ]
+            x, _ = attention(q, k, v, mask=mask, dropout=self.dropout)
+            # x shape [h, n, d_k] -> [n, h * d_k]
+            return jnp.reshape(jnp.transpose(x, (1, 0, 2)), orig_shape)
 
-        x, _ = attention(query, key, value, dropout=self.dropout)
-        # x shape [h, n, d_k] -> [n, h * d_k]
-        x = jnp.reshape(jnp.transpose(x, (1, 0, 2)), orig_shape)
-        return self.final_linear(x)
+        return self.final_linear(do_attention(query, key, value))
 
 
 class PositionwiseFeedForward(nn.Module):
@@ -157,12 +118,16 @@ class PositionwiseFeedForward(nn.Module):
     d_model: int
     d_ff: int
     dropout: nn.Module
+    w1_init_stddev: float = 0.02
+    w2_init_stddev: float = 0.02
 
     def setup(self):
         self.w_1 = nn.Dense(self.d_ff,
-                            kernel_init=nn.initializers.xavier_uniform())
+                            kernel_init=nn.initializers.normal(
+                                self.w1_init_stddev))
         self.w_2 = nn.Dense(self.d_model,
-                            kernel_init=nn.initializers.xavier_uniform())
+                            kernel_init=nn.initializers.normal(
+                                self.w2_init_stddev))
 
     def __call__(self, x):
-        return self.w_2(self.dropout(jax.nn.relu(self.w_1(x))))
+        return self.dropout(self.w_2(jax.nn.gelu(self.w_1(x))))

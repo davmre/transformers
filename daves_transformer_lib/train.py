@@ -49,13 +49,13 @@ class Trainer:
         self.data_generator = data_generator
         self.checkpoint_dir = checkpoint_dir
         self.checkpoint_interval = checkpoint_interval
-        self._callbacks = {}
+        self._callbacks = []
         if checkpoint_dir:
             self.add_callback(step_interval=checkpoint_interval,
                               fn=save_checkpoint_callback(checkpoint_dir))
 
     def add_callback(self, step_interval, fn):
-        self._callbacks[step_interval] = fn
+        self._callbacks.append((step_interval, fn))
 
     def init_parameters(self, key):
         model = self.model
@@ -75,9 +75,9 @@ class Trainer:
     def init_from_checkpoint(self, step, optimizer):
         parameters = self.init_parameters(jax.random.PRNGKey(0))
         state = self.init(parameters, optimizer)
-        state = checkpoints.restore_checkpoint(self.checkpoint_dir,
-                                               target=state,
-                                               step=step)
+        return checkpoints.restore_checkpoint(self.checkpoint_dir,
+                                              target=state,
+                                              step=step)
 
     def forward_loss(self, parameters, key, xs, y):
         y_pred = self.model.apply(parameters, xs, rngs=self.model.rngs(key))
@@ -108,7 +108,7 @@ class Trainer:
                                                     xs=xs,
                                                     y=y)
 
-            for i, fn in self._callbacks.items():
+            for i, fn in self._callbacks:
                 if state.step % i == 0:
                     fn(xs, y, loss, grad, aux, state)
             writer.add_scalar('train/loss', loss, state.step)

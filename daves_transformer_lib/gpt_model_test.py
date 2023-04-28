@@ -53,13 +53,15 @@ class GPTModelTests(parameterized.TestCase):
                                         weights=weights,
                                         context=context1,
                                         context_length=1,
-                                        num_tokens=20)
+                                        num_tokens=20,
+                                        include_logprobs=True)
         t_with_lps2 = generate.generate(key=key,
                                         model=model,
                                         weights=weights,
                                         context=context2,
                                         context_length=1,
-                                        num_tokens=20)
+                                        num_tokens=20,
+                                        include_logprobs=True)
 
         for (t1, lp1s), (t2, lps2) in zip(t_with_lps1, t_with_lps2):
             self.assertEqual(int(t1), int(t2))

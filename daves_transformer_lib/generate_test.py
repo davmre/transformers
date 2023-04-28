@@ -35,10 +35,9 @@ class GenerateTests(parameterized.TestCase):
 
         model = IncrementModel(vocab_size=4, block_size=block_size)
         weights = model.init(jax.random.PRNGKey(0), xs)
-        tokens_with_lps = generate.generate(key,
-                                            model=model,
-                                            weights=weights,
-                                            context=xs,
-                                            num_tokens=10)
-        tokens = [t for (t, lps) in tokens_with_lps]
-        self.assertSequenceEqual(tokens, [1, 2, 3, 0, 1, 2, 3, 0, 1, 2])
+        tokens = generate.generate(key,
+                                   model=model,
+                                   weights=weights,
+                                   context=xs,
+                                   num_tokens=10)
+        self.assertSequenceEqual(list(tokens), [1, 2, 3, 0, 1, 2, 3, 0, 1, 2])

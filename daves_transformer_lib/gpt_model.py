@@ -104,13 +104,18 @@ def generate_step(model,
                   weights,
                   context,
                   context_length,
+                  top_k=None,
                   temperature=1.0):
     forward_key, sample_key = jax.random.split(key)
     all_logits = model.apply(weights, context, rngs=model.rngs(forward_key))
-    final_char_logits = all_logits[context_length - 1, :] / temperature
-    probs = jax.nn.softmax(final_char_logits)
-    c = jax.random.choice(sample_key, len(final_char_logits), shape=(), p=probs)
-    return c, jax.nn.log_softmax(final_char_logits)
+    logits = all_logits[..., context_length - 1, :] / temperature
+    if top_k is not None:
+        # TODO: find a more efficient top_k implementation.
+        v = jnp.sort(logits, axis=-1)[..., -top_k]
+        logits = jnp.where(logits < v[..., jnp.newaxis], -jnp.inf, logits)
+    probs = jax.nn.softmax(logits)
+    c = jax.random.choice(sample_key, logits.shape[-1], shape=(), p=probs)
+    return c, jax.nn.log_softmax(logits)
 
 
 def generate(key,
@@ -119,6 +124,7 @@ def generate(key,
              context,
              num_tokens,
              context_length=None,
+             top_k=None,
              temperature=1.0):
 
     # Pad context out to block size.
@@ -137,12 +143,13 @@ def generate(key,
                                      weights=weights,
                                      context=context,
                                      context_length=context_length,
+                                     top_k=top_k,
                                      temperature=temperature)
         yield c, log_probs
 
         # Add the generated character to the context for the next step.
         context_length = min(context_length + 1, model.block_size)
-        if context_length <= model.block_size:
+        if context_length < model.block_size:
             context = context.at[context_length - 1].set(c)
         else:
             context = jnp.concatenate(

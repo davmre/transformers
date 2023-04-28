@@ -3,6 +3,7 @@ import functools
 from absl import app
 from ml_collections import config_dict
 from ml_collections import config_flags
+import orbax.checkpoint
 import tree
 
 import jax
@@ -12,15 +13,15 @@ import numpy as np
 from flax import linen as nn
 import optax
 
+from daves_transformer_lib import generate
 from daves_transformer_lib import gpt_model
 from daves_transformer_lib import train
 
 config = config_dict.ConfigDict()
 config.model = gpt_model.GPTModel.get_default_config()
-config.train = train.Trainer.get_default_config()
+config.train = config_dict.ConfigDict()
 config.train.weight_decay = 0.1
-config.train.num_train_steps = 5000
-config.train.checkpoint_dir = '/tmp/gpt/checkpoints'
+config.train.num_steps = 5000
 config.train.checkpoint_interval = 50
 config.train.log_dir = '/tmp/gpt'
 config.batch_size = 64
@@ -111,8 +112,11 @@ def main(_):
         model=model,
         data_generator=g,
         loss_fn=jax.vmap(gpt_model.log_loss, in_axes=(0, 0)),
-        checkpoint_dir=config.train.checkpoint_dir,
-        checkpoint_interval=config.train.checkpoint_interval)
+        log_dir=config.train.log_dir,
+        checkpoint_options=orbax.checkpoint.CheckpointManagerOptions(
+            save_interval_steps=config.train.checkpoint_interval,
+            create=True,
+            max_to_keep=3))
     key, init_key = jax.random.split(key)
     params = trainer.init_parameters(key=init_key)
 
@@ -137,12 +141,13 @@ def main(_):
                       state,
                       context=' ',
                       verbose=False):
-        tokens_with_lps = gpt_model.generate(
+        tokens_with_lps = generate.generate(
             jax.random.PRNGKey(0),
             model=model,
             weights=state.params,
             context=train_dataset.encode(context),
-            num_tokens=300)
+            top_k=10,
+            num_tokens=500)
 
         if verbose:
             print(f"step {state.step}: ")
@@ -155,7 +160,7 @@ def main(_):
             print()
         else:
             tokens = [int(t) for t, lps in tokens_with_lps]
-            print(f"step {state.step}: ", tokens)
+            print(f"step {state.step}: ")
             for t in tokens:
                 print(train_dataset.itos[t], end='')
             print()
@@ -163,12 +168,12 @@ def main(_):
     def print_loss(_xs, _y, loss, _grad, _aux, state):
         print(f"step {state.step} loss {loss}")
 
-    trainer.add_callback(step_interval=50,
+    trainer.add_callback(step_interval=25,
                          fn=functools.partial(generate_text,
                                               context="O God, O God!"))
     trainer.add_callback(step_interval=1, fn=print_loss)
 
-    state = trainer.run(key=key, state=state)
+    state = trainer.run(key=key, state=state, num_steps=config.train.num_steps)
 
 
 if __name__ == '__main__':

@@ -6,8 +6,8 @@ from jax import numpy as jnp
 import numpy as np
 
 from flax import linen as nn
-import optax
 
+from daves_transformer_lib import generate
 from daves_transformer_lib import gpt_model
 
 
@@ -27,21 +27,6 @@ class IncrementModel(nn.Module):
 
 
 class GPTModelTests(parameterized.TestCase):
-
-    @parameterized.parameters([{'block_size': 1}, {'block_size': 100}])
-    def test_generate_deterministic(self, block_size):
-        key = jax.random.PRNGKey(0)
-        xs = jnp.array([0])
-
-        model = IncrementModel(vocab_size=4, block_size=block_size)
-        weights = model.init(jax.random.PRNGKey(0), xs)
-        tokens_with_lps = gpt_model.generate(key,
-                                             model=model,
-                                             weights=weights,
-                                             context=xs,
-                                             num_tokens=10)
-        tokens = [t for (t, lps) in tokens_with_lps]
-        self.assertSequenceEqual(tokens, [1, 2, 3, 0, 1, 2, 3, 0, 1, 2])
 
     def test_causal_masking(self):
         key = jax.random.PRNGKey(0)
@@ -63,18 +48,18 @@ class GPTModelTests(parameterized.TestCase):
         logits2 = model.apply(weights, context2)
         self.assertSequenceAlmostEqual(logits1[0, :], logits2[0, :])
 
-        t_with_lps1 = gpt_model.generate(key=key,
-                                         model=model,
-                                         weights=weights,
-                                         context=context1,
-                                         context_length=1,
-                                         num_tokens=20)
-        t_with_lps2 = gpt_model.generate(key=key,
-                                         model=model,
-                                         weights=weights,
-                                         context=context2,
-                                         context_length=1,
-                                         num_tokens=20)
+        t_with_lps1 = generate.generate(key=key,
+                                        model=model,
+                                        weights=weights,
+                                        context=context1,
+                                        context_length=1,
+                                        num_tokens=20)
+        t_with_lps2 = generate.generate(key=key,
+                                        model=model,
+                                        weights=weights,
+                                        context=context2,
+                                        context_length=1,
+                                        num_tokens=20)
 
         for (t1, lp1s), (t2, lps2) in zip(t_with_lps1, t_with_lps2):
             self.assertEqual(int(t1), int(t2))

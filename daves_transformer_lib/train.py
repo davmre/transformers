@@ -1,7 +1,10 @@
 from collections import defaultdict
 import functools
+import os
+import time
 
 from ml_collections import config_dict
+import orbax.checkpoint
 import tensorboardX
 import tree
 
@@ -9,50 +12,35 @@ import jax
 from jax import numpy as jnp
 
 from flax import linen as nn
-from flax.training import checkpoints
 from flax.training import train_state
 import optax
 
 
-def save_checkpoint_callback(checkpoint_dir):
-
-    def fn(_xs, _y, _loss, _grad, _aux, state):
-        _ = checkpoints.save_checkpoint(checkpoint_dir,
-                                        target=state,
-                                        step=state.step)
-        print("saved checkpoint")
-
-    return fn
-
-
 class Trainer:
-
-    @staticmethod
-    def get_default_config():
-        config = config_dict.ConfigDict()
-        config.num_train_steps = 6
-        config.resume_from_checkpoint = -1
-        config.checkpoint_dir = None
-        config.log_dir = '/tmp/logs'
-        return config
 
     def __init__(self,
                  config,
                  model,
                  data_generator,
                  loss_fn,
-                 checkpoint_dir=None,
-                 checkpoint_interval=0):
+                 checkpoint_options=None,
+                 log_dir="/tmp/training_log"):
         self.config = config
         self.model = model
         self.loss_fn = loss_fn
         self.data_generator = data_generator
-        self.checkpoint_dir = checkpoint_dir
-        self.checkpoint_interval = checkpoint_interval
+        self.log_dir = log_dir
         self._callbacks = []
-        if checkpoint_dir:
-            self.add_callback(step_interval=checkpoint_interval,
-                              fn=save_checkpoint_callback(checkpoint_dir))
+
+        checkpoint_manager = None
+        if checkpoint_options:
+            checkpoint_dir = os.path.join(self.log_dir, "checkpoints")
+            checkpoint_manager = orbax.checkpoint.CheckpointManager(
+                checkpoint_dir,
+                orbax.checkpoint.Checkpointer(
+                    orbax.checkpoint.PyTreeCheckpointHandler()),
+                checkpoint_options)
+        self.checkpoint_manager = checkpoint_manager
 
     def add_callback(self, step_interval, fn):
         self._callbacks.append((step_interval, fn))
@@ -66,18 +54,17 @@ class Trainer:
         return model.init(rngs, init_xs)
 
     def init(self, parameters, optimizer):
-        return train_state.TrainState(step=0,
-                                      apply_fn=self.model.apply,
-                                      params=parameters,
-                                      tx=optimizer,
-                                      opt_state=optimizer.init(parameters))
-
-    def init_from_checkpoint(self, step, optimizer):
-        parameters = self.init_parameters(jax.random.PRNGKey(0))
-        state = self.init(parameters, optimizer)
-        return checkpoints.restore_checkpoint(self.checkpoint_dir,
-                                              target=state,
-                                              step=step)
+        state = train_state.TrainState(step=0,
+                                       apply_fn=self.model.apply,
+                                       params=parameters,
+                                       tx=optimizer,
+                                       opt_state=optimizer.init(parameters))
+        if self.checkpoint_manager is not None:
+            resume_from_step = self.checkpoint_manager.latest_step()
+            if resume_from_step is not None:
+                state = self.checkpoint_manager.restore(resume_from_step,
+                                                        items=state)
+        return state
 
     def forward_loss(self, parameters, key, xs, y):
         y_pred = self.model.apply(parameters, xs, rngs=self.model.rngs(key))
@@ -96,21 +83,28 @@ class Trainer:
                                                            y=y),
                                          has_aux=True)(state.params)
         state = state.apply_gradients(grads=grad)
-        return loss, grad, aux, state, next_key
+        return loss, aux, state, next_key
 
-    def run(self, key, state):
-        writer = tensorboardX.SummaryWriter(logdir=self.config.log_dir)
+    def run(self, key, state, num_steps):
+        writer = tensorboardX.SummaryWriter(logdir=self.log_dir)
 
-        for _ in range(self.config.num_train_steps):
+        for _ in range(num_steps):
+            t0 = time.time()
             xs, y = next(self.data_generator)
-            loss, grad, aux, state, key = self.step(key=key,
-                                                    state=state,
-                                                    xs=xs,
-                                                    y=y)
+            t01 = time.time()
+            print(f"data {t01 - t0:.3f}")
+            loss, aux, state, key = self.step(key=key, state=state, xs=xs, y=y)
+            grad = None
+            t1 = time.time()
+            print(f"{t1 - t0:.3f}")
 
             for i, fn in self._callbacks:
                 if state.step % i == 0:
                     fn(xs, y, loss, grad, aux, state)
+            if self.checkpoint_manager is not None:
+                self.checkpoint_manager.save(state.step,
+                                             state,
+                                             metrics={'loss': loss})
             writer.add_scalar('train/loss', loss, state.step)
         writer.flush()
 

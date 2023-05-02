@@ -1,4 +1,5 @@
 import functools
+import math
 from typing import Callable, List
 
 import jax
@@ -7,11 +8,19 @@ from jax import numpy as jnp
 from flax import linen as nn
 
 
+@functools.partial(jnp.vectorize, signature='(),(k)->()')
+def log_loss(y, y_pred):
+    # Allow a slight type mismatch: y_pred are unnormalized logits,
+    # while `y` is an integer index.
+    assert (y.shape == ())
+    logits = jax.nn.log_softmax(y_pred)
+    return -logits[y]
+
+
 def causal_dependence(num_positions):
     #r = jnp.arange(num_positions)
     # rows index outputs, columns inputs
-    return jnp.tril(jnp.ones([num_positions,
-                              num_positions]))  #r[:, jnp.newaxis] >= r
+    return jnp.tril(jnp.ones([num_positions, num_positions]))
 
 
 class Encoder(nn.Module):
@@ -58,21 +67,8 @@ class EncoderLayer(nn.Module):
                                                         dropout=self.dropout)
 
     def __call__(self, x, mask):
-        x = self.attn_sublayer(x,
-                               sublayer=lambda x: self.self_attn(x, x, x, mask))
+        x = self.attn_sublayer(x, sublayer=lambda x: self.self_attn(x, mask))
         return self.feed_forward_sublayer(x, self.feed_forward)
-
-
-def attention(query, key, value, mask=None, dropout=None):
-    "Compute 'Scaled Dot Product Attention'"
-    d_k = query.shape[-1]
-    scores = jnp.matmul(query, jnp.swapaxes(key, -2, -1)) / jnp.sqrt(float(d_k))
-    if mask is not None:
-        scores = jnp.where(mask == 0, -1e9, scores)
-    p_attn = jax.nn.softmax(scores, axis=-1)
-    if dropout is not None:
-        p_attn = dropout(p_attn)
-    return jnp.matmul(p_attn, value), p_attn
 
 
 class MultiHeadedAttention(nn.Module):
@@ -83,34 +79,34 @@ class MultiHeadedAttention(nn.Module):
 
     def setup(self):
         self.d_k = self.d_model // self.h
-        [
-            self.query_linear, self.key_linear, self.value_linear,
-            self.final_linear
-        ] = [
-            nn.Dense(self.d_model, kernel_init=nn.initializers.normal(0.02))
-            for _ in range(4)
-        ]
+        self.qkv_linear = nn.Dense(self.d_model * 3,
+                                   kernel_init=nn.initializers.normal(0.02))
+        self.final_linear = nn.Dense(self.d_model,
+                                     kernel_init=nn.initializers.normal(0.02))
 
-    def __call__(self, query, key, value, mask=None):
-        # q, k, v all have shape [..., n, h * d_k].
+    def __call__(self, x, mask=None):
+        input_shape = x.shape
 
-        query = self.query_linear(query)
-        key = self.key_linear(key)
-        value = self.value_linear(value)
+        qkv = self.qkv_linear(x)
+        # Split into individual attention heads.
+        qkv = jnp.reshape(qkv, input_shape[:-1] + (self.h, self.d_k * 3))
 
-        @functools.partial(jnp.vectorize, signature='(n,m),(n,m),(n,m)->(n,m)')
-        def do_attention(q, k, v):
-            # Convert to shape [..., h, n, d_k].
-            orig_shape = q.shape
-            q, k, v = [
-                jnp.transpose(jnp.reshape(t, [-1, self.h, self.d_k]), (1, 0, 2))
-                for t in (q, k, v)
-            ]
-            x, _ = attention(q, k, v, mask=mask, dropout=self.dropout)
-            # x shape [h, n, d_k] -> [n, h * d_k]
-            return jnp.reshape(jnp.transpose(x, (1, 0, 2)), orig_shape)
+        # Convert shape [..., n, h * d_k] to shape [..., h, n, d_k].
+        qkv = jnp.swapaxes(qkv, -3, -2)
+        query, key, value = jnp.split(qkv, 3, axis=-1)
 
-        return self.final_linear(do_attention(query, key, value))
+        scores = jnp.matmul(query, jnp.swapaxes(key, -2, -1)) / jnp.sqrt(
+            float(self.d_k))
+        if mask is not None:
+            scores = jnp.where(mask == 0, -1e9, scores)
+        p_attn = jax.nn.softmax(scores, axis=-1)
+        if self.dropout is not None:
+            p_attn = self.dropout(p_attn)
+        x = jnp.matmul(p_attn, value)
+
+        # x shape [h, n, d_k] -> [n, h * d_k]
+        x = jnp.reshape(jnp.swapaxes(x, -3, -2), input_shape)
+        return self.final_linear(x)
 
 
 class PositionwiseFeedForward(nn.Module):
@@ -131,3 +127,53 @@ class PositionwiseFeedForward(nn.Module):
 
     def __call__(self, x):
         return self.dropout(self.w_2(jax.nn.gelu(self.w_1(x))))
+
+
+class GPTModel(nn.Module):
+    vocab_size: int
+    block_size: int
+    num_heads: int
+    num_layers: int
+    d_head: int
+    d_ff: int
+    dropout: nn.Module
+    internal_dtype = jnp.float32
+
+    def rngs(self, key):
+        return {'dropout': key}
+
+    @nn.compact
+    def __call__(self, xs):
+        d_model = self.d_head * self.num_heads
+
+        # `xs`` is an array of integer indices.
+        num_positions = xs.shape[-1]
+        token_embed = nn.Embed(num_embeddings=self.vocab_size,
+                               features=d_model,
+                               embedding_init=nn.initializers.normal(0.02))
+        position_embed = nn.Embed(num_embeddings=self.block_size,
+                                  features=d_model,
+                                  embedding_init=nn.initializers.normal(0.02))
+        zs = token_embed(xs) + position_embed(jnp.arange(num_positions))
+
+        for _ in range(self.num_layers):
+            transformer_layer = EncoderLayer(
+                size=d_model,
+                self_attn=MultiHeadedAttention(self.num_heads,
+                                               d_model,
+                                               dropout=self.dropout),
+                feed_forward=PositionwiseFeedForward(
+                    d_model,
+                    self.d_ff,
+                    dropout=self.dropout,
+                    w2_init_stddev=0.02 * math.sqrt(2 * self.num_layers)),
+                dropout=self.dropout)
+            zs = transformer_layer(
+                zs, mask=causal_dependence(num_positions=num_positions))
+
+        zs = nn.LayerNorm()(zs)
+        ys = nn.Dense(self.vocab_size,
+                      use_bias=False,
+                      dtype=self.internal_dtype,
+                      kernel_init=nn.initializers.normal(0.02))(zs)
+        return ys

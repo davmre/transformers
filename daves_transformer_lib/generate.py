@@ -35,7 +35,7 @@ def generate(key,
              include_logprobs=False):
 
     # Pad context out to block size.
-    if not context_length:
+    if context_length is None:
         context_length = len(context)
     assert (context_length > 0)
     context = jnp.concatenate([
@@ -52,13 +52,14 @@ def generate(key,
                                      context_length=context_length,
                                      top_k=top_k,
                                      temperature=temperature)
+
         # Add the generated character to the context for the next step.
-        context_length = min(context_length + 1, model.block_size)
         if context_length < model.block_size:
-            context = context.at[context_length - 1].set(c)
+            context = context.at[context_length].set(c)
         else:
             context = jnp.concatenate(
                 [context[1:], jnp.array([c], dtype=context.dtype)])
+        context_length = min(context_length + 1, model.block_size)
 
         if include_logprobs:
             yield c, log_probs

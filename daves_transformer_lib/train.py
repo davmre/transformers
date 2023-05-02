@@ -3,17 +3,14 @@ import functools
 import os
 import time
 
-from ml_collections import config_dict
 import orbax.checkpoint
 import tensorboardX
-import tree
 
 import jax
 from jax import numpy as jnp
 
 from flax import linen as nn
 from flax.training import train_state
-import optax
 
 
 class Trainer:
@@ -94,13 +91,12 @@ class Trainer:
             t01 = time.time()
             print(f"data {t01 - t0:.3f}")
             loss, aux, state, key = self.step(key=key, state=state, xs=xs, y=y)
-            grad = None
             t1 = time.time()
             print(f"{t1 - t0:.3f}")
 
             for i, fn in self._callbacks:
                 if state.step % i == 0:
-                    fn(xs, y, loss, grad, aux, state)
+                    fn(xs, y, loss, aux, state)
             if self.checkpoint_manager is not None:
                 self.checkpoint_manager.save(state.step,
                                              state,

@@ -1,7 +1,7 @@
 [tool.isort]
 profile = "google"
 known_jax = ["numpy","jax"]
-known_jax_ecosystem = ["brax","flax","optax","tensorflow_probability"]
+known_jax_ecosystem = ["brax","flax","orbax","optax","tensorflow_probability"]
 sections=["FUTURE","STDLIB","THIRDPARTY","JAX","JAX_ECOSYSTEM","FIRSTPARTY","LOCALFOLDER"]
 
 [tool.yapf]

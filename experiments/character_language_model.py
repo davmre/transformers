@@ -14,11 +14,16 @@ from flax import linen as nn
 import optax
 
 from daves_transformer_lib import generate
-from daves_transformer_lib import gpt_model
 from daves_transformer_lib import train
+from daves_transformer_lib import transformer_lib
 
 config = config_dict.ConfigDict()
-config.model = gpt_model.GPTModel.get_default_config()
+config.model = config_dict.ConfigDict()
+config.model.num_heads = 6
+config.model.num_layers = 6
+config.model.d_head = 32
+config.model.d_ff = 192 * 4
+config.model.dropout_rate = 0.1
 config.train = config_dict.ConfigDict()
 config.train.weight_decay = 0.1
 config.train.num_steps = 5000
@@ -28,6 +33,16 @@ config.batch_size = 64
 config.seed = 0
 
 _CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
+
+
+def weight_decay_mask(params):
+
+    def f(p, x):
+        # Apply weight decay only to weight matrices of Dense layers.
+        weight_decay = (p[-1] == 'kernel')
+        return weight_decay
+
+    return tree.map_structure_with_path(f, params)
 
 
 class CharDataset():
@@ -97,21 +112,21 @@ def main(_):
     g = character_generator(train_dataset)
     g = batch_generator(g, batch_size=config.batch_size)
 
-    model = gpt_model.GPTModel(vocab_size=train_dataset.vocab_size,
-                               num_heads=config.model.num_heads,
-                               num_layers=config.model.num_layers,
-                               d_head=config.model.d_head,
-                               d_ff=config.model.d_ff,
-                               block_size=train_dataset.block_size,
-                               dropout=nn.Dropout(
-                                   rate=config.model.dropout_rate,
-                                   deterministic=False))
+    model = transformer_lib.GPTModel(vocab_size=train_dataset.vocab_size,
+                                     num_heads=config.model.num_heads,
+                                     num_layers=config.model.num_layers,
+                                     d_head=config.model.d_head,
+                                     d_ff=config.model.d_ff,
+                                     block_size=train_dataset.block_size,
+                                     dropout=nn.Dropout(
+                                         rate=config.model.dropout_rate,
+                                         deterministic=False))
 
     trainer = train.Trainer(
         config=config.train,
         model=model,
         data_generator=g,
-        loss_fn=jax.vmap(gpt_model.log_loss, in_axes=(0, 0)),
+        loss_fn=jax.vmap(transformer_lib.log_loss, in_axes=(0, 0)),
         log_dir=config.train.log_dir,
         checkpoint_options=orbax.checkpoint.CheckpointManagerOptions(
             save_interval_steps=config.train.checkpoint_interval,
@@ -129,48 +144,29 @@ def main(_):
                     b1=0.9,
                     b2=0.95,
                     weight_decay=config.train.weight_decay,
-                    mask=gpt_model.weight_decay_mask(params)),
+                    mask=weight_decay_mask(params)),
     )
     state = trainer.init(params, optimizer)
 
-    def generate_text(_xs,
-                      _y,
-                      _loss,
-                      _grad,
-                      _aux,
-                      state,
-                      context=' ',
-                      verbose=False):
-        tokens_with_lps = generate.generate(
-            jax.random.PRNGKey(0),
-            model=model,
-            weights=state.params,
-            context=train_dataset.encode(context),
-            top_k=10,
-            num_tokens=500)
+    def generate_text(_xs, _y, _loss, _aux, state, context=' ', verbose=False):
+        tokens = generate.generate(jax.random.PRNGKey(0),
+                                   model=model,
+                                   weights=state.params,
+                                   context=train_dataset.encode(context),
+                                   top_k=10,
+                                   num_tokens=500)
+        print(f"step {state.step}: ")
+        print(context, end='')
+        for t in tokens:
+            print(train_dataset.itos[int(t)], end='')
+        print()
 
-        if verbose:
-            print(f"step {state.step}: ")
-            for t, lps in tokens_with_lps:
-                for c, i in train_dataset.stoi.items():
-                    print(f" char `{repr(c)}` (i={i}): {lps[i]:.2f}", end='')
-                print()
-                print("actually sampled: ", repr(train_dataset.itos[int(t)]),
-                      "lp", lps[t])
-            print()
-        else:
-            tokens = [int(t) for t, lps in tokens_with_lps]
-            print(f"step {state.step}: ")
-            for t in tokens:
-                print(train_dataset.itos[t], end='')
-            print()
-
-    def print_loss(_xs, _y, loss, _grad, _aux, state):
+    def print_loss(_xs, _y, loss, _aux, state):
         print(f"step {state.step} loss {loss}")
 
     trainer.add_callback(step_interval=25,
                          fn=functools.partial(generate_text,
-                                              context="O God, O God!"))
+                                              context="O God, O God! "))
     trainer.add_callback(step_interval=1, fn=print_loss)
 
     state = trainer.run(key=key, state=state, num_steps=config.train.num_steps)

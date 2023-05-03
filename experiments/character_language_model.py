@@ -36,11 +36,20 @@ config.seed = 0
 
 _CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
 
+# Remote training with Modal: follow getting-started instructions at
+# https://modal.com/home
+# to install the client and create a token. Then run
+# `modal run experiments/character_language_model.py`
+# To download trained model checkpoints, run
+# ```
+# modal volume get chargpt-checkpoints ** remote
+# modal volume get chargpt-checkpoints "**/.*" remote
+# ```
+# (TODO: is there a single glob pattern to recursively download hidden and
+# non-hidden files? )
 stub = modal.Stub(name="chargpt")
-
 image = modal.Image.debian_slim().pip_install_from_requirements(
     '/Users/dave/code/transformers/requirements.txt')
-
 volume = modal.SharedVolume().persist("chargpt-checkpoints")
 
 

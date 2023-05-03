@@ -1,4 +1,5 @@
 import dataclasses
+import typing
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -44,8 +45,7 @@ class TransformerTests(parameterized.TestCase):
                     d_model, d_ff, dropout=dropout),
                 dropout=dropout)
 
-        encoder = transformer_lib.Encoder(features=d_model,
-                                          num_layers=num_layers,
+        encoder = transformer_lib.Encoder(num_layers=num_layers,
                                           layer_fn=build_layer)
 
         x = jax.random.normal(jax.random.PRNGKey(42),
@@ -56,9 +56,7 @@ class TransformerTests(parameterized.TestCase):
             'dropout': jax.random.PRNGKey(1)
         }
         weights = encoder.init(rngs, x)
-        print("WEIHTS", weights)
         y = encoder.apply(weights, x, rngs=rngs)
-        print("RESULT Y", y, y.shape)
 
     def test_causal_masking(self):
         key = jax.random.PRNGKey(0)
@@ -78,6 +76,8 @@ class TransformerTests(parameterized.TestCase):
 
         logits1 = model.apply(weights, context1)
         logits2 = model.apply(weights, context2)
+        logits1 = typing.cast(jax.Array, logits1)
+        logits2 = typing.cast(jax.Array, logits2)
         self.assertSequenceAlmostEqual(logits1[0, :], logits2[0, :])
 
         t_with_lps1 = generate.generate(key=key,

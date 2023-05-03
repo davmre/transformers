@@ -1,38 +1,48 @@
 import functools
+from typing import Optional, Tuple
+
+from jaxtyping import Array
+from jaxtyping import Float
+from jaxtyping import Int
+from jaxtyping import PyTree
 
 import jax
 from jax import numpy as jnp
 
 
 @functools.partial(jax.jit, static_argnums=(0,))
-def generate_step(model,
-                  key,
-                  weights,
-                  context,
-                  context_length,
-                  top_k=None,
-                  temperature=1.0):
+def generate_step(
+    model,
+    key: jax.random.KeyArray,
+    weights: PyTree,
+    context: Int[Array, "n"],
+    context_length: int,
+    top_k: Optional[int] = None,
+    temperature: Float = 1.0
+) -> Tuple[Int[Array, ""], Float[Array, "vocab_size"]]:
     forward_key, sample_key = jax.random.split(key)
     all_logits = model.apply(weights, context, rngs=model.rngs(forward_key))
-    logits = all_logits[..., context_length - 1, :] / temperature
+    logits = all_logits[...,  # type: jax.Array
+                        context_length - 1, :] / temperature
     if top_k is not None:
         # TODO: find a more efficient top_k implementation.
         v = jnp.sort(logits, axis=-1)[..., -top_k]
-        logits = jnp.where(logits < v[..., jnp.newaxis], -jnp.inf, logits)
+        logits = jnp.where(logits < v[..., jnp.newaxis], -jnp.inf,
+                           logits)  # type: jax.Array
     probs = jax.nn.softmax(logits)
     c = jax.random.choice(sample_key, logits.shape[-1], shape=(), p=probs)
     return c, jax.nn.log_softmax(logits)
 
 
-def generate(key,
+def generate(key: jax.random.KeyArray,
              model,
-             weights,
-             context,
-             num_tokens,
-             context_length=None,
-             top_k=None,
-             temperature=1.0,
-             include_logprobs=False):
+             weights: PyTree,
+             context: Array,
+             num_tokens: int,
+             context_length: Optional[int] = None,
+             top_k: Optional[int] = None,
+             temperature: Float = 1.0,
+             include_logprobs: bool = False):
 
     # Pad context out to block size.
     if context_length is None:
@@ -65,5 +75,3 @@ def generate(key,
             yield c, log_probs
         else:
             yield c
-
-    return context

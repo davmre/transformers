@@ -1,6 +1,11 @@
 import functools
 import math
-from typing import Callable, List
+from typing import Callable, Optional
+
+from jaxtyping import Array
+from jaxtyping import Float
+from jaxtyping import Int
+from jaxtyping import PyTree
 
 import jax
 from jax import numpy as jnp
@@ -9,7 +14,8 @@ from flax import linen as nn
 
 
 @functools.partial(jnp.vectorize, signature='(),(k)->()')
-def log_loss(y, y_pred):
+def log_loss(y: Int[Array, "..."],
+             y_pred: Float[Array, "... k"]) -> Float[Array, "..."]:
     # Allow a slight type mismatch: y_pred are unnormalized logits,
     # while `y` is an integer index.
     assert (y.shape == ())
@@ -17,58 +23,11 @@ def log_loss(y, y_pred):
     return -logits[y]
 
 
-def causal_dependence(num_positions):
+def causal_dependence(
+        num_positions: int) -> Float[Array, "num_positions num_positions"]:
     #r = jnp.arange(num_positions)
     # rows index outputs, columns inputs
     return jnp.tril(jnp.ones([num_positions, num_positions]))
-
-
-class Encoder(nn.Module):
-    "Core encoder is a stack of N layers"
-
-    features: int
-    num_layers: int
-    layer_fn: Callable
-
-    def setup(self):
-        self.layers = [self.layer_fn() for _ in range(self.num_layers)]
-        self.norm = nn.LayerNorm()
-
-    def __call__(self, x, mask=None):
-        for layer in self.layers:
-            x = layer(x, mask)
-        return self.norm(x)
-
-
-class SublayerConnection(nn.Module):
-    """
-    A residual connection followed by a layer norm.
-    Note for code simplicity the norm is first as opposed to last.
-    """
-    size: int
-    dropout: nn.Module
-
-    def setup(self):
-        self.norm = nn.LayerNorm()
-
-    def __call__(self, x, sublayer: Callable):
-        return x + self.dropout(sublayer(self.norm(x)))
-
-
-class EncoderLayer(nn.Module):
-    size: int
-    self_attn: nn.Module
-    feed_forward: nn.Module
-    dropout: nn.Module
-
-    def setup(self):
-        self.attn_sublayer = SublayerConnection(self.size, dropout=self.dropout)
-        self.feed_forward_sublayer = SublayerConnection(self.size,
-                                                        dropout=self.dropout)
-
-    def __call__(self, x, mask):
-        x = self.attn_sublayer(x, sublayer=lambda x: self.self_attn(x, mask))
-        return self.feed_forward_sublayer(x, self.feed_forward)
 
 
 class MultiHeadedAttention(nn.Module):
@@ -84,7 +43,11 @@ class MultiHeadedAttention(nn.Module):
         self.final_linear = nn.Dense(self.d_model,
                                      kernel_init=nn.initializers.normal(0.02))
 
-    def __call__(self, x, mask=None):
+    def __call__(
+        self,
+        x: Float[Array, "... num_positions d_model"],
+        mask: Optional[Float[Array, "num_positions num_positions"]] = None
+    ) -> Float[Array, "... num_positions d_model"]:
         input_shape = x.shape
 
         qkv = self.qkv_linear(x)
@@ -125,8 +88,57 @@ class PositionwiseFeedForward(nn.Module):
                             kernel_init=nn.initializers.normal(
                                 self.w2_init_stddev))
 
-    def __call__(self, x):
+    def __call__(self, x: Float[Array,
+                                "... d_model"]) -> Float[Array, "... d_model"]:
         return self.dropout(self.w_2(jax.nn.gelu(self.w_1(x))))
+
+
+class SublayerConnection(nn.Module):
+    """
+    A residual connection followed by a layer norm.
+    Note for code simplicity the norm is first as opposed to last.
+    """
+    size: int
+    dropout: nn.Module
+
+    def setup(self):
+        self.norm = nn.LayerNorm()
+
+    def __call__(self, x: Float[Array, "... d_model"],
+                 sublayer: Callable) -> Float[Array, "... d_model"]:
+        return x + self.dropout(sublayer(self.norm(x)))
+
+
+class EncoderLayer(nn.Module):
+    size: int
+    self_attn: nn.Module
+    feed_forward: nn.Module
+    dropout: nn.Module
+
+    def setup(self):
+        self.attn_sublayer = SublayerConnection(self.size, dropout=self.dropout)
+        self.feed_forward_sublayer = SublayerConnection(self.size,
+                                                        dropout=self.dropout)
+
+    def __call__(self, x, mask):
+        x = self.attn_sublayer(x, sublayer=lambda x: self.self_attn(x, mask))
+        return self.feed_forward_sublayer(x, self.feed_forward)
+
+
+class Encoder(nn.Module):
+    "Core encoder is a stack of N layers"
+
+    num_layers: int
+    layer_fn: Callable
+
+    def setup(self):
+        self.layers = [self.layer_fn() for _ in range(self.num_layers)]
+        self.norm = nn.LayerNorm()
+
+    def __call__(self, x, mask=None):
+        for layer in self.layers:
+            x = layer(x, mask)
+        return self.norm(x)
 
 
 class GPTModel(nn.Module):
@@ -139,11 +151,13 @@ class GPTModel(nn.Module):
     dropout: nn.Module
     internal_dtype = jnp.float32
 
-    def rngs(self, key):
+    def rngs(self, key: jax.random.KeyArray):
         return {'dropout': key}
 
     @nn.compact
-    def __call__(self, xs):
+    def __call__(
+        self, xs: Int[Array, "... num_positions"]
+    ) -> Float[Array, "... num_positions vocab_size"]:
         d_model = self.d_head * self.num_heads
 
         # `xs`` is an array of integer indices.

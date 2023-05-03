@@ -29,7 +29,7 @@ config.model.dropout_rate = 0.1
 config.train = config_dict.ConfigDict()
 config.train.weight_decay = 0.1
 config.train.num_steps = 5000
-config.train.checkpoint_interval = 50
+config.train.checkpoint_interval = 500
 config.train.log_dir = '/tmp/gpt'
 config.batch_size = 64
 config.seed = 0
@@ -125,7 +125,7 @@ def do_training(config, text):
         print(f"step {state.step}: ")
         print(context, end='')
         for t in tokens:
-            print(train_dataset.itos[int(t)], end='')
+            print(train_dataset.itos[int(t)], end='')  # type: ignore
         print()
 
     def print_loss(_xs, _y, loss, _aux, state):

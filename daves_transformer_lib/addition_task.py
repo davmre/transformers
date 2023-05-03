@@ -16,8 +16,8 @@ from daves_transformer_lib import transformer_lib
 
 @struct.dataclass
 class ArithmeticProblem:
-    a: jnp.ndarray
-    b: jnp.ndarray
+    a: jax.Array
+    b: jax.Array
     op: Callable
 
     @property

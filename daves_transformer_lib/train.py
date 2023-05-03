@@ -2,7 +2,9 @@ from collections import defaultdict
 import functools
 import os
 import time
+import typing
 
+from jaxtyping import PyTree
 import orbax.checkpoint
 import tensorboardX
 
@@ -11,6 +13,7 @@ from jax import numpy as jnp
 
 from flax import linen as nn
 from flax.training import train_state
+import optax
 
 
 class Trainer:
@@ -50,7 +53,8 @@ class Trainer:
         rngs = dict(rngs, params=params_key)
         return model.init(rngs, init_xs)
 
-    def init(self, parameters, optimizer):
+    def init(self, parameters: PyTree,
+             optimizer: optax.GradientTransformation) -> train_state.TrainState:
         state = train_state.TrainState(step=0,
                                        apply_fn=self.model.apply,
                                        params=parameters,
@@ -61,9 +65,10 @@ class Trainer:
             if resume_from_step is not None:
                 state = self.checkpoint_manager.restore(resume_from_step,
                                                         items=state)
-        return state
+        return typing.cast(train_state.TrainState, state)
 
-    def forward_loss(self, parameters, key, xs, y):
+    def forward_loss(self, parameters: PyTree, key: jax.random.KeyArray,
+                     xs: PyTree, y: PyTree):
         y_pred = self.model.apply(parameters, xs, rngs=self.model.rngs(key))
         loss = self.loss_fn(y, y_pred)
         # Average over any batch and position dimensions.
@@ -71,7 +76,8 @@ class Trainer:
         return scalar_loss, (xs, y, y_pred, loss)
 
     @functools.partial(jax.jit, static_argnums=0)
-    def step(self, state: train_state.TrainState, key, xs, y):
+    def step(self, state: train_state.TrainState, key: jax.random.KeyArray,
+             xs: PyTree, y: PyTree):
         key, next_key = jax.random.split(key)
         (loss,
          aux), grad = jax.value_and_grad(functools.partial(self.forward_loss,
@@ -82,7 +88,8 @@ class Trainer:
         state = state.apply_gradients(grads=grad)
         return loss, aux, state, next_key
 
-    def run(self, key, state, num_steps):
+    def run(self, key: jax.random.KeyArray, state: train_state.TrainState,
+            num_steps: int) -> train_state.TrainState:
         writer = tensorboardX.SummaryWriter(logdir=self.log_dir)
 
         for _ in range(num_steps):

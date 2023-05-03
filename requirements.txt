@@ -14,3 +14,4 @@ transformers[sentencepiece]
 datasets
 ml_collections
 tensorboardX
+jaxtyping

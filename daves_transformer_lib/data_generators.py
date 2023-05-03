@@ -1,3 +1,8 @@
+from typing import Optional, Tuple
+
+from jaxtyping import Array
+from jaxtyping import Int
+
 import jax
 from jax import numpy as jnp
 import numpy as np
@@ -11,7 +16,7 @@ class CharDataset():
     https://github.com/karpathy/minGPT/blob/master/projects/chargpt/chargpt.py
     """
 
-    def __init__(self, data, block_size):
+    def __init__(self, data: str, block_size: int):
 
         chars = sorted(list(set(data)))
         data_size, vocab_size = len(data), len(chars)
@@ -25,16 +30,18 @@ class CharDataset():
         self.data = data
         self.encoded_data = self.encode(data)
 
-    def encode(self, s):
+    def encode(self, s: str) -> jax.Array:
         return jnp.array([self.stoi[c] for c in s], dtype=jnp.int32)
 
-    def decode(self, x):
+    def decode(self, x) -> str:
         return str([self.itos[int(i)] for i in x])
 
     def __len__(self):
         return len(self.data) - self.block_size
 
-    def __getitem__(self, idx):
+    def __getitem__(
+            self, idx: Int
+    ) -> Tuple[Int[Array, 'block_size'], Int[Array, 'block_size']]:
         # x = self.encoded_data[idx:idx + self.block_size]
         # y = self.encoded_data[idx + 1:idx + self.block_size + 1]
 
@@ -44,7 +51,7 @@ class CharDataset():
         return x, y
 
 
-def character_generator(dataset, batch_size=None):
+def character_generator(dataset, batch_size: Optional[int] = None):
     max_idx = len(dataset)
 
     dataset_get = lambda idx: dataset[idx]

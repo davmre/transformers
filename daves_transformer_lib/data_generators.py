@@ -1,3 +1,4 @@
+import jax
 from jax import numpy as jnp
 import numpy as np
 
@@ -20,7 +21,9 @@ class CharDataset():
         self.itos = {i: ch for i, ch in enumerate(chars)}
         self.vocab_size = vocab_size
         self.block_size = block_size
+
         self.data = data
+        self.encoded_data = self.encode(data)
 
     def encode(self, s):
         return jnp.array([self.stoi[c] for c in s], dtype=jnp.int32)
@@ -32,25 +35,22 @@ class CharDataset():
         return len(self.data) - self.block_size
 
     def __getitem__(self, idx):
-        # grab a chunk of (block_size + 1) characters from the data
-        chunk = self.data[idx:idx + self.block_size + 1]
-        # encode every character to an integer
-        dix = [self.stoi[s] for s in chunk]
-        # return as tensors
-        x = jnp.array(dix[:-1], dtype=jnp.int32)
-        y = jnp.array(dix[1:], dtype=jnp.int32)
+        # x = self.encoded_data[idx:idx + self.block_size]
+        # y = self.encoded_data[idx + 1:idx + self.block_size + 1]
+
+        x = jax.lax.dynamic_slice(self.encoded_data, [idx], [self.block_size])
+        y = jax.lax.dynamic_slice(self.encoded_data, [idx + 1],
+                                  [self.block_size])
         return x, y
 
 
-def character_generator(dataset):
+def character_generator(dataset, batch_size=None):
     max_idx = len(dataset)
+
+    dataset_get = lambda idx: dataset[idx]
+    dataset_get = jax.vmap(dataset_get) if batch_size else dataset_get
+
     while True:
-        idx = np.random.randint(low=0, high=max_idx)
-        x, y = dataset[idx]
+        idx = np.random.randint(low=0, high=max_idx, size=batch_size)
+        x, y = dataset_get(idx)
         yield x, y
-
-
-def batch_generator(g, batch_size):
-    while True:
-        xs, ys = zip(*[next(g) for _ in range(batch_size)])
-        yield (jnp.stack(xs, axis=0), jnp.stack(ys, axis=0))

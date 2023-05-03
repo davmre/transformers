@@ -76,8 +76,8 @@ def do_training(config, text):
 
     # construct the training dataset
     train_dataset = data_generators.CharDataset(text, block_size=128)
-    g = data_generators.character_generator(train_dataset)
-    g = data_generators.batch_generator(g, batch_size=config.batch_size)
+    g = data_generators.character_generator(train_dataset,
+                                            batch_size=config.batch_size)
 
     model = transformer_lib.GPTModel(vocab_size=train_dataset.vocab_size,
                                      num_heads=config.model.num_heads,

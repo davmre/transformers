@@ -3,6 +3,7 @@ import functools
 from absl import app
 from ml_collections import config_dict
 from ml_collections import config_flags
+import modal
 import orbax.checkpoint
 import tree
 
@@ -13,6 +14,7 @@ import numpy as np
 from flax import linen as nn
 import optax
 
+from daves_transformer_lib import data_generators
 from daves_transformer_lib import generate
 from daves_transformer_lib import train
 from daves_transformer_lib import transformer_lib
@@ -34,6 +36,13 @@ config.seed = 0
 
 _CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
 
+stub = modal.Stub(name="chargpt")
+
+image = modal.Image.debian_slim().pip_install_from_requirements(
+    '/Users/dave/code/transformers/requirements.txt')
+
+volume = modal.SharedVolume().persist("chargpt-checkpoints")
+
 
 def weight_decay_mask(params):
 
@@ -45,72 +54,21 @@ def weight_decay_mask(params):
     return tree.map_structure_with_path(f, params)
 
 
-class CharDataset():
-    """
-    Emits batches of characters.
-
-    Adapted from karpathy's minGPT:
-    https://github.com/karpathy/minGPT/blob/master/projects/chargpt/chargpt.py
-    """
-
-    def __init__(self, data, block_size):
-
-        chars = sorted(list(set(data)))
-        data_size, vocab_size = len(data), len(chars)
-        print('data has %d characters, %d unique.' % (data_size, vocab_size))
-
-        self.stoi = {ch: i for i, ch in enumerate(chars)}
-        self.itos = {i: ch for i, ch in enumerate(chars)}
-        self.vocab_size = vocab_size
-        self.block_size = block_size
-        self.data = data
-
-    def encode(self, s):
-        return jnp.array([self.stoi[c] for c in s], dtype=jnp.int32)
-
-    def decode(self, x):
-        return str([self.itos[int(i)] for i in x])
-
-    def __len__(self):
-        return len(self.data) - self.block_size
-
-    def __getitem__(self, idx):
-        # grab a chunk of (block_size + 1) characters from the data
-        chunk = self.data[idx:idx + self.block_size + 1]
-        # encode every character to an integer
-        dix = [self.stoi[s] for s in chunk]
-        # return as tensors
-        x = jnp.array(dix[:-1], dtype=jnp.int32)
-        y = jnp.array(dix[1:], dtype=jnp.int32)
-        return x, y
-
-
-def character_generator(dataset):
-    max_idx = len(dataset)
-    while True:
-        idx = np.random.randint(low=0, high=max_idx)
-        x, y = dataset[idx]
-        yield x, y
-
-
-def batch_generator(g, batch_size):
-    while True:
-        xs, ys = zip(*[next(g) for _ in range(batch_size)])
-        yield (jnp.stack(xs, axis=0), jnp.stack(ys, axis=0))
-
-
-def main(_):
-    config = _CONFIG.value
+@stub.function(image=image,
+               shared_volumes={"/tmp/gpt": volume},
+               gpu="any",
+               timeout=3600)
+def do_training(config, text):
     key = jax.random.PRNGKey(config.seed)
     np.random.seed(config.seed)  # For data loading.
 
-    # construct the training dataset
-    with open('experiments/data/shakespear.txt', 'r') as f:
-        text = f.read()
+    print("Default backend", jax.default_backend())
+    print("Devices", jax.devices())
 
-    train_dataset = CharDataset(text, block_size=128)
-    g = character_generator(train_dataset)
-    g = batch_generator(g, batch_size=config.batch_size)
+    # construct the training dataset
+    train_dataset = data_generators.CharDataset(text, block_size=128)
+    g = data_generators.character_generator(train_dataset)
+    g = data_generators.batch_generator(g, batch_size=config.batch_size)
 
     model = transformer_lib.GPTModel(vocab_size=train_dataset.vocab_size,
                                      num_heads=config.model.num_heads,
@@ -170,6 +128,22 @@ def main(_):
     trainer.add_callback(step_interval=1, fn=print_loss)
 
     state = trainer.run(key=key, state=state, num_steps=config.train.num_steps)
+
+
+@stub.local_entrypoint()
+def modal_main():
+    #config = _CONFIG.value
+    global config
+    with open('experiments/data/shakespear.txt', 'r') as f:
+        text = f.read()
+    do_training.call(config, text)
+
+
+def main(_):
+    with open('experiments/data/shakespear.txt', 'r') as f:
+        text = f.read()
+    config = _CONFIG.value
+    do_training(config, text)
 
 
 if __name__ == '__main__':

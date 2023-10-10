@@ -5,7 +5,6 @@ import time
 import typing
 
 from jaxtyping import PyTree
-import orbax.checkpoint
 import tensorboardX
 
 import jax
@@ -14,6 +13,7 @@ from jax import numpy as jnp
 from flax import linen as nn
 from flax.training import train_state
 import optax
+import orbax.checkpoint
 
 
 class Trainer:
@@ -105,7 +105,7 @@ class Trainer:
                 if state.step % i == 0:
                     fn(xs, y, loss, aux, state)
             if self.checkpoint_manager is not None:
-                self.checkpoint_manager.save(state.step,
+                self.checkpoint_manager.save(int(state.step),
                                              state,
                                              metrics={'loss': loss})
             writer.add_scalar('train/loss', loss, state.step)

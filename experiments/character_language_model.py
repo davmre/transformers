@@ -4,7 +4,6 @@ from absl import app
 from ml_collections import config_dict
 from ml_collections import config_flags
 import modal
-import orbax.checkpoint
 import tree
 
 import jax
@@ -13,6 +12,7 @@ import numpy as np
 
 from flax import linen as nn
 import optax
+import orbax.checkpoint
 
 from daves_transformer_lib import data_generators
 from daves_transformer_lib import generate
@@ -50,7 +50,7 @@ _CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
 stub = modal.Stub(name="chargpt")
 image = modal.Image.debian_slim().pip_install_from_requirements(
     '/Users/dave/code/transformers/requirements.txt')
-volume = modal.SharedVolume().persist("chargpt-checkpoints")
+volume = modal.NetworkFileSystem.persisted("chargpt-checkpoints")
 
 
 def weight_decay_mask(params):
@@ -64,7 +64,7 @@ def weight_decay_mask(params):
 
 
 @stub.function(image=image,
-               shared_volumes={"/tmp/gpt": volume},
+               network_file_systems={"/tmp/gpt": volume},
                gpu="any",
                timeout=3600)
 def do_training(config, text):
@@ -152,7 +152,7 @@ def main(_):
     with open('experiments/data/shakespear.txt', 'r') as f:
         text = f.read()
     config = _CONFIG.value
-    do_training(config, text)
+    do_training.local(config, text)
 
 
 if __name__ == '__main__':

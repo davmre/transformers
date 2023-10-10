@@ -1,4 +1,5 @@
 import functools
+import itertools
 
 from absl import app
 from ml_collections import config_dict
@@ -23,7 +24,7 @@ config = config_dict.ConfigDict()
 config.model = config_dict.ConfigDict()
 config.model.num_heads = 6
 config.model.num_layers = 6
-config.model.d_head = 32
+config.model.d_model = 192
 config.model.d_ff = 192 * 4
 config.model.dropout_rate = 0.1
 config.train = config_dict.ConfigDict()
@@ -50,7 +51,7 @@ _CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
 stub = modal.Stub(name="chargpt")
 image = modal.Image.debian_slim().pip_install_from_requirements(
     '/Users/dave/code/transformers/requirements.txt')
-volume = modal.NetworkFileSystem.persisted("chargpt-checkpoints")
+volume = modal.NetworkFileSystem.new().persisted("chargpt-checkpoints")
 
 
 def weight_decay_mask(params):
@@ -82,7 +83,7 @@ def do_training(config, text):
     model = transformer_lib.GPTModel(vocab_size=train_dataset.vocab_size,
                                      num_heads=config.model.num_heads,
                                      num_layers=config.model.num_layers,
-                                     d_head=config.model.d_head,
+                                     d_model=config.model.d_model,
                                      d_ff=config.model.d_ff,
                                      block_size=train_dataset.block_size,
                                      dropout=nn.Dropout(
@@ -120,11 +121,10 @@ def do_training(config, text):
                                    model=model,
                                    weights=state.params,
                                    context=train_dataset.encode(context),
-                                   top_k=10,
-                                   num_tokens=500)
+                                   top_k=10)
         print(f"step {state.step}: ")
         print(context, end='')
-        for t in tokens:
+        for t in itertools.islice(tokens, 500):
             print(train_dataset.itos[int(t)], end='')  # type: ignore
         print()
 
@@ -145,7 +145,7 @@ def modal_main():
     global config
     with open('experiments/data/shakespear.txt', 'r') as f:
         text = f.read()
-    do_training.call(config, text)
+    do_training.remote(config, text)
 
 
 def main(_):

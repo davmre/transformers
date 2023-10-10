@@ -69,7 +69,7 @@ class Trainer:
 
     def forward_loss(self, parameters: PyTree, key: jax.random.KeyArray,
                      xs: PyTree, y: PyTree):
-        y_pred = self.model.apply(parameters, xs, rngs=self.model.rngs(key))
+        y_pred, _ = self.model.apply(parameters, xs, rngs=self.model.rngs(key))
         loss = self.loss_fn(y, y_pred)
         # Average over any batch and position dimensions.
         scalar_loss = jnp.mean(loss)
@@ -108,7 +108,7 @@ class Trainer:
                 self.checkpoint_manager.save(int(state.step),
                                              state,
                                              metrics={'loss': loss})
-            writer.add_scalar('train/loss', loss, state.step)
+            writer.add_scalar('train/loss', loss, int(state.step))
         writer.flush()
 
         return state

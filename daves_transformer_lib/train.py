@@ -51,7 +51,7 @@ class Trainer:
         params_key, rngs_key = jax.random.split(key)
         rngs = model.rngs(rngs_key)
         rngs = dict(rngs, params=params_key)
-        return model.init(rngs, init_xs)
+        return model.init(rngs, init_xs[0, ...])
 
     def init(self, parameters: PyTree,
              optimizer: optax.GradientTransformation) -> train_state.TrainState:
@@ -69,7 +69,12 @@ class Trainer:
 
     def forward_loss(self, parameters: PyTree, key: jax.random.KeyArray,
                      xs: PyTree, y: PyTree):
-        y_pred, _ = self.model.apply(parameters, xs, rngs=self.model.rngs(key))
+        # Apply the model in parallel to each batch element.
+        batch_size = xs.shape[0]
+        split_rngs = jax.tree_map(lambda k: jax.random.split(k, batch_size),
+                                  self.model.rngs(key))
+        y_pred, _ = jax.vmap(lambda w, x, r: self.model.apply(w, x, rngs=r),
+                             in_axes=(None, 0, 0))(parameters, xs, split_rngs)
         loss = self.loss_fn(y, y_pred)
         # Average over any batch and position dimensions.
         scalar_loss = jnp.mean(loss)

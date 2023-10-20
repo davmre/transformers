@@ -44,7 +44,7 @@ def generate_step(
 def generate(key: jax.random.KeyArray,
              model,
              weights: PyTree,
-             context: Array,
+             context: Int[Array, 'num_positions'],
              context_length: Optional[int] = None,
              top_k: Optional[int] = None,
              temperature: Float = 1.0,
@@ -52,13 +52,13 @@ def generate(key: jax.random.KeyArray,
 
     # Pad context out to block size.
     if context_length is None:
-        context_length = len(context)
+        context_length = context.shape[-1]
     assert (context_length > 0)
     context = jnp.concatenate([
         context,
         jnp.zeros([model.block_size - len(context)], dtype=context.dtype)
-    ])
-
+    ],
+                              axis=-1)
     while True:
         gen_key, key = jax.random.split(key)
         c, log_probs, _ = generate_step(model,

@@ -73,6 +73,38 @@ class KeyValueCacheTests(parameterized.TestCase):
             jnp.ones([num_new_positions, num_new_positions]))
 
 
+class MixtureOfExpertsTests(parameterized.TestCase):
+
+    @parameterized.parameters([
+        {
+            'num_active_experts': 1
+        },
+        {
+            'num_active_experts': 2
+        },
+    ])
+    def test_mixture_of_dense(self, num_active_experts):
+        num_experts = 8
+        d_in = 3
+        d_out = 2
+        mixture_layer = transformer_lib.NaiveSparseMixtureOfExpertsLayer(
+            num_experts=num_experts,
+            num_active_experts=num_active_experts,
+            sublayer=nn.Dense,
+            sublayer_args=(d_out,))
+
+        x = jnp.ones([d_in])
+        rngs = {
+            'params': jax.random.PRNGKey(0),
+            'expert_choice': jax.random.PRNGKey(1)
+        }
+        weights = mixture_layer.init(rngs, x)
+        print("GOT WEIGHTS", weights)
+        #with jax.checking_leaks():
+        y = mixture_layer.apply(weights, x, rngs=rngs)
+        print("GOT Y", y)
+
+
 class TransformerTests(parameterized.TestCase):
 
     @parameterized.parameters([
@@ -99,8 +131,7 @@ class TransformerTests(parameterized.TestCase):
             self_attn=transformer_lib.MultiHeadedAttention(h,
                                                            d_model,
                                                            dropout=dropout),
-            feed_forward=transformer_lib.PositionwiseFeedForward(
-                d_model, d_ff, dropout=dropout),
+            feed_forward=transformer_lib.PositionwiseFeedForward(d_model, d_ff),
             dropout=dropout)
 
         x = jax.random.normal(jax.random.PRNGKey(42),

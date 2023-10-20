@@ -85,6 +85,8 @@ def do_training(config, text):
                                      num_layers=config.model.num_layers,
                                      d_model=config.model.d_model,
                                      d_ff=config.model.d_ff,
+                                     num_ff_experts=1,
+                                     num_ff_experts_active=1,
                                      block_size=train_dataset.block_size,
                                      dropout=nn.Dropout(
                                          rate=config.model.dropout_rate,

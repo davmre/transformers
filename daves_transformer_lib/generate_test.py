@@ -1,3 +1,5 @@
+import itertools
+
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -23,7 +25,8 @@ class IncrementModel(nn.Module):
     @nn.compact
     def __call__(self, xs, kv_caches=None):
         desired_ys = (xs + 1) % self.vocab_size
-        logits = 10 * jax.nn.one_hot(desired_ys, num_classes=self.vocab_size)
+        logits = 10 * jax.nn.one_hot(
+            desired_ys, num_classes=self.vocab_size, axis=-1)
         return logits, kv_caches
 
 
@@ -40,7 +43,8 @@ class GenerateTests(parameterized.TestCase):
                                    model=model,
                                    weights=weights,
                                    context=xs)
-        self.assertSequenceEqual(list(tokens), [1, 2, 3, 0, 1, 2, 3, 0, 1, 2])
+        self.assertSequenceEqual(list(itertools.islice(tokens, 0, 10)),
+                                 [1, 2, 3, 0, 1, 2, 3, 0, 1, 2])
 
     @parameterized.parameters([
         {

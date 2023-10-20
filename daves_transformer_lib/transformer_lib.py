@@ -1,6 +1,7 @@
+import dataclasses
 import functools
 import math
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Type
 
 from jaxtyping import Array
 from jaxtyping import Float
@@ -33,7 +34,6 @@ class KeyValueCache:
 
         new_valid_size = jnp.minimum(self.cache_size,
                                      self.valid_size + num_new_positions)
-        valid_retrieved_size = new_valid_size - num_new_positions
 
         # Add the cached positions.
         key_value = jnp.concatenate([self.cache[num_new_positions:], key_value],
@@ -79,6 +79,64 @@ def causal_dependence(
     #r = jnp.arange(num_positions)
     # rows index outputs, columns inputs
     return jnp.tril(jnp.ones([num_positions, num_positions]))
+
+
+class NaiveSparseMixtureOfExpertsLayer(nn.Module):
+    # it'd be nice to have a generic wrapper that, for any layer,
+    # instantiates N copies of it and then chooses one/two to run.
+    # this doesn't allow for expert choice routing but it does
+    # make things generally nice.
+    # I think first I write a MoE for a general dense layer
+    # then maybe make it meta as a wrapper for attention etc.
+
+    num_experts: int
+    num_active_experts: int
+    sublayer: Type[nn.Module]
+    sublayer_args: Tuple = ()
+    sublayer_kwargs: Dict = struct.field(default_factory=dict)
+
+    @nn.compact
+    def __call__(self, x):
+        # Sample experts by adding Gaussian noise to the logits, where the noise
+        # itself has data-dependent scale. This is the formulation from the
+        # original Shazeer et al. (2017) paper (Outrageously Large Neural
+        # Networks: The Sparsely-Gated Mixture-of-Experts Layer,
+        # https://arxiv.org/abs/1701.06538 sec 2.1)
+        print("calling with x", x.shape)
+        logits = nn.Dense(self.num_experts, name='experts_linear')(x)
+        jitter_scales = nn.softplus(
+            nn.Dense(self.num_experts, name='experts_jitter_scales_linear')(x))
+        jitter = jitter_scales * jax.random.normal(
+            key=self.make_rng('expert_choice'), shape=jitter_scales.shape)
+
+        # Select only the top experts and return a weighted sum of their
+        # contributions.
+        # TODO(davmre): investigate speed of top_k vs argmax (cf https://github.com/google/jax/issues/9940)
+        selected_logits, selected_expert_idxs = jax.lax.top_k(
+            logits + jitter, self.num_active_experts)
+        sparse_logits = jnp.zeros_like(logits).at[selected_expert_idxs].set(
+            selected_logits)
+        gate_probs = nn.softmax(sparse_logits)
+
+        # Run the input through all experts in parallel, then sum the results according
+        # to the (sparse) gating weights. This throws away the computational
+        # benefits of a sparse mixture, but keeps the code simple and allows
+        # us to guarantee that each input gets its choice of expert. Given the
+        # constraint of fixed-shape arrays, the alternative would be for each
+        # expert to process a bounded number of inputs in each batch
+        # (expert-choice routing), which is computationally more efficient but
+        # will sometimes route inputs incorrectly. That choice makes sense at
+        # scale, but for research purposes we prefer to trade the computational
+        # benefits of sparsity in exchange for reliable routing.
+        batch_of_experts = nn.vmap(
+            self.sublayer,
+            axis_size=self.num_experts,
+            variable_axes={'params': 0},
+            split_rngs={'params': True},
+            in_axes=None  # type: ignore
+        )(*self.sublayer_args, **self.sublayer_kwargs)
+        results = batch_of_experts(x)
+        return jnp.sum(gate_probs[..., jnp.newaxis] * results, axis=0)
 
 
 class MultiHeadedAttention(nn.Module):
@@ -145,7 +203,6 @@ class PositionwiseFeedForward(nn.Module):
     "Implements FFN equation."
     d_model: int
     d_ff: int
-    dropout: nn.Module
     w1_init_stddev: float = 0.02
     w2_init_stddev: float = 0.02
 
@@ -159,7 +216,7 @@ class PositionwiseFeedForward(nn.Module):
 
     def __call__(self, x: Float[Array,
                                 "... d_model"]) -> Float[Array, "... d_model"]:
-        return self.dropout(self.w_2(jax.nn.gelu(self.w_1(x))))
+        return self.w_2(jax.nn.gelu(self.w_1(x)))
 
 
 class TransformerBlock(nn.Module):
@@ -173,7 +230,6 @@ class TransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm()
 
     def __call__(self, x, mask=None, kv_cache=None):
-
         # Attention block
         x_attn = self.norm1(x)
         x_attn, kv_cache = self.self_attn(x_attn, mask=mask, kv_cache=kv_cache)
@@ -197,9 +253,13 @@ class GPTModel(nn.Module):
     dropout: nn.Module
     use_position_embeddings: bool = True
     internal_dtype = jnp.float32
+    num_ff_experts: int = 1
+    num_ff_experts_active: int = 1
 
     def rngs(self, key: jax.random.KeyArray):
-        return {'dropout': key}
+        dropout_key, expert_choice_key = jax.random.split(key)
+        rngs = {'dropout': dropout_key, 'expert_choice': expert_choice_key}
+        return rngs
 
     def initialize_kv_caches(self) -> List[KeyValueCache]:
         return [
@@ -230,17 +290,35 @@ class GPTModel(nn.Module):
             zs += position_embed(jnp.arange(num_positions))
 
         for layer_idx in range(self.num_layers):
-            transformer_layer = TransformerBlock(
-                size=self.d_model,
-                self_attn=MultiHeadedAttention(self.num_heads,
-                                               self.d_model,
-                                               dropout=self.dropout),
-                feed_forward=PositionwiseFeedForward(
-                    self.d_model,
-                    self.d_ff,
-                    dropout=self.dropout,
-                    w2_init_stddev=0.02 * math.sqrt(2 * self.num_layers)),
-                dropout=self.dropout)
+
+            ff_layer_type = PositionwiseFeedForward
+            ff_args = (self.d_model, self.d_ff)
+            ff_kwargs = dict(w2_init_stddev=0.02 *
+                             math.sqrt(2 * self.num_layers))
+            if self.num_ff_experts > 1:
+                ff_kwargs = dict(num_experts=self.num_ff_experts,
+                                 num_active_experts=self.num_ff_experts_active,
+                                 sublayer=ff_layer_type,
+                                 sublayer_args=ff_args,
+                                 sublayer_kwargs=ff_kwargs)
+                ff_args = ()
+                ff_layer_type = NaiveSparseMixtureOfExpertsLayer
+
+            ff_layer = nn.vmap(  # Parallelize over sequence positions.
+                ff_layer_type,
+                variable_axes={'params': None},
+                split_rngs={
+                    'params': False,
+                    'expert_choice': True
+                },
+                in_axes=0)(*ff_args, **ff_kwargs)  # type: ignore
+            attn_layer = MultiHeadedAttention(self.num_heads,
+                                              self.d_model,
+                                              dropout=self.dropout)
+            transformer_layer = TransformerBlock(size=self.d_model,
+                                                 self_attn=attn_layer,
+                                                 feed_forward=ff_layer,
+                                                 dropout=self.dropout)
 
             zs, updated_kv_cache = transformer_layer(
                 zs,

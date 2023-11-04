@@ -1,3 +1,5 @@
+from abc import ABC
+from abc import abstractmethod
 from typing import Optional, Tuple
 
 from jaxtyping import Array
@@ -8,7 +10,28 @@ from jax import numpy as jnp
 import numpy as np
 
 
-class CharDataset():
+class Dataset(ABC):
+
+    @abstractmethod
+    def encode(self, s: str) -> jax.Array:
+        pass
+
+    @abstractmethod
+    def decode(self, x) -> str:
+        pass
+
+    @abstractmethod
+    def __len__(self):
+        pass
+
+    @abstractmethod
+    def __getitem__(
+            self, idx: Int
+    ) -> Tuple[Int[Array, 'block_size'], Int[Array, 'block_size']]:
+        pass
+
+
+class CharDataset(Dataset):
     """
     Emits batches of characters.
 

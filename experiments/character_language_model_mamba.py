@@ -8,6 +8,7 @@ import modal
 import tree
 
 import jax
+from jax import config as jax_config
 from jax import numpy as jnp
 import numpy as np
 
@@ -17,25 +18,24 @@ import orbax.checkpoint
 
 from daves_transformer_lib import data_generators
 from daves_transformer_lib import generate
+from daves_transformer_lib import mamba_lib
 from daves_transformer_lib import train
-from daves_transformer_lib import transformer_lib
 
 config = config_dict.ConfigDict()
 config.model = config_dict.ConfigDict()
-config.model.num_heads = 6
 config.model.num_layers = 6
-config.model.d_model = 192
-config.model.d_ff = 192 * 4
-config.model.dropout_rate = 0.1
+config.model.d_model = 96
 config.train = config_dict.ConfigDict()
 config.train.weight_decay = 0.1
 config.train.num_steps = 5000
 config.train.checkpoint_interval = 500
-config.train.log_dir = '/tmp/gpt'
+config.train.log_dir = '/tmp/mamba'
 config.batch_size = 64
 config.seed = 0
 
 _CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
+
+jax_config.update("jax_debug_nans", True)
 
 # Remote training with Modal: follow getting-started instructions at
 # https://modal.com/home
@@ -48,10 +48,10 @@ _CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
 # ```
 # (TODO: is there a single glob pattern to recursively download hidden and
 # non-hidden files? )
-stub = modal.Stub(name="chargpt")
+stub = modal.Stub(name="charmamba")
 image = modal.Image.debian_slim().pip_install_from_requirements(
     '/Users/dave/code/transformers/requirements.txt')
-volume = modal.NetworkFileSystem.new().persisted("chargpt-checkpoints")
+volume = modal.NetworkFileSystem.new().persisted("charmamba-checkpoints")
 
 
 def weight_decay_mask(params):
@@ -65,7 +65,7 @@ def weight_decay_mask(params):
 
 
 @stub.function(image=image,
-               network_file_systems={"/tmp/gpt": volume},
+               network_file_systems={"/tmp/mamba": volume},
                gpu="any",
                timeout=3600)
 def do_training(config, text):
@@ -80,17 +80,12 @@ def do_training(config, text):
     g = data_generators.character_generator(train_dataset,
                                             batch_size=config.batch_size)
 
-    model = transformer_lib.GPTModel(vocab_size=train_dataset.vocab_size,
-                                     num_heads=config.model.num_heads,
-                                     num_layers=config.model.num_layers,
-                                     d_model=config.model.d_model,
-                                     d_ff=config.model.d_ff,
-                                     num_ff_experts=1,
-                                     num_ff_experts_active=1,
-                                     block_size=train_dataset.block_size,
-                                     dropout=nn.Dropout(
-                                         rate=config.model.dropout_rate,
-                                         deterministic=False))
+    model = mamba_lib.MambaLanguageModel(n_tokens=train_dataset.vocab_size,
+                                         n_layers=config.model.num_layers,
+                                         d_model=config.model.d_model,
+                                         expand=2,
+                                         d_conv=4,
+                                         d_state=8)
 
     trainer = train.Trainer(
         config=config.train,
@@ -118,24 +113,9 @@ def do_training(config, text):
     )
     state = trainer.init(params, optimizer)
 
-    def generate_text(_xs, _y, _loss, _aux, state, context=' ', verbose=False):
-        tokens = generate.generate(jax.random.PRNGKey(0),
-                                   model=model,
-                                   weights=state.params,
-                                   context=train_dataset.encode(context),
-                                   top_k=10)
-        print(f"step {state.step}: ")
-        print(context, end='')
-        for t in itertools.islice(tokens, 500):
-            print(train_dataset.itos[int(t)], end='')  # type: ignore
-        print()
-
     def print_loss(_xs, _y, loss, _aux, state):
         print(f"step {state.step} loss {loss}")
 
-    trainer.add_callback(step_interval=25,
-                         fn=functools.partial(generate_text,
-                                              context="O God, O God! "))
     trainer.add_callback(step_interval=1, fn=print_loss)
 
     state = trainer.run(key=key, state=state, num_steps=config.train.num_steps)

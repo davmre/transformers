@@ -4,6 +4,9 @@ import os
 import time
 import typing
 
+from jaxtyping import Array
+from jaxtyping import Float
+from jaxtyping import Int
 from jaxtyping import PyTree
 import tensorboardX
 
@@ -14,6 +17,16 @@ from flax import linen as nn
 from flax.training import train_state
 import optax
 import orbax.checkpoint
+
+
+@functools.partial(jnp.vectorize, signature='(),(k)->()')
+def log_loss(y: Int[Array, "..."],
+             y_pred: Float[Array, "... k"]) -> Float[Array, "..."]:
+    # Allow a slight type mismatch: y_pred are unnormalized logits,
+    # while `y` is an integer index.
+    assert (y.shape == ())
+    logits = jax.nn.log_softmax(y_pred)
+    return -logits[y]
 
 
 class Trainer:

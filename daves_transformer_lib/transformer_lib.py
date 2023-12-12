@@ -64,16 +64,6 @@ class KeyValueCache:
         return new_cache, key_value, mask
 
 
-@functools.partial(jnp.vectorize, signature='(),(k)->()')
-def log_loss(y: Int[Array, "..."],
-             y_pred: Float[Array, "... k"]) -> Float[Array, "..."]:
-    # Allow a slight type mismatch: y_pred are unnormalized logits,
-    # while `y` is an integer index.
-    assert (y.shape == ())
-    logits = jax.nn.log_softmax(y_pred)
-    return -logits[y]
-
-
 def causal_dependence(
         num_positions: int) -> Float[Array, "num_positions num_positions"]:
     #r = jnp.arange(num_positions)

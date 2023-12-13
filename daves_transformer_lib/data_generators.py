@@ -135,8 +135,8 @@ class AlternatingDataset(Dataset):
     ) -> Tuple[Int[Array, 'block_size'], Int[Array, 'block_size']]:
         c1 = idx % self.vocab_size
         c2 = idx // self.vocab_size
-        x = jnp.tile(jnp.asarray([c1, c2]), [self.block_size / 2])
-        y = jnp.tile(jnp.asarray([c2, c1]), [self.block_size / 2])
+        x = jnp.tile(jnp.asarray([c1, c2]), [self.block_size // 2])
+        y = jnp.tile(jnp.asarray([c2, c1]), [self.block_size // 2])
         return x, y
 
 

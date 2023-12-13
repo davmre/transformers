@@ -123,7 +123,8 @@ def do_training(config, text):
                                    model=model,
                                    weights=state.params,
                                    context=train_dataset.encode(context),
-                                   top_k=10)
+                                   top_k=10,
+                                   block_size=model.block_size)
         print(f"step {state.step}: ")
         print(context, end='')
         for t in itertools.islice(tokens, 500):

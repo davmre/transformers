@@ -251,7 +251,7 @@ class GPTModel(nn.Module):
         rngs = {'dropout': dropout_key, 'expert_choice': expert_choice_key}
         return rngs
 
-    def initialize_kv_caches(self) -> List[KeyValueCache]:
+    def initialize_hidden_context(self) -> List[KeyValueCache]:
         return [
             KeyValueCache(cache=jnp.zeros([self.block_size, self.d_model * 2],
                                           dtype=self.internal_dtype),
@@ -262,9 +262,10 @@ class GPTModel(nn.Module):
     def __call__(
         self,
         xs: Int[Array, "... num_positions"],
-        kv_caches: Optional[List[KeyValueCache]] = None
+        hidden_context: Optional[List[KeyValueCache]] = None
     ) -> Tuple[Float[Array, "... num_positions vocab_size"],
                Optional[List[KeyValueCache]]]:
+        kv_caches = hidden_context
 
         # `xs`` is an array of integer indices.
         num_positions = xs.shape[-1]

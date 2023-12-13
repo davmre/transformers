@@ -76,7 +76,7 @@ def do_training(config, text):
     print("Devices", jax.devices())
 
     # construct the training dataset
-    train_dataset = data_generators.CharDataset(text, block_size=128)
+    train_dataset = data_generators.ConstDataset(block_size=64)
     g = data_generators.character_generator(train_dataset,
                                             batch_size=config.batch_size)
 
@@ -113,8 +113,25 @@ def do_training(config, text):
     )
     state = trainer.init(params, optimizer)
 
+    def generate_text(_xs, _y, _loss, _aux, state, context=' ', verbose=False):
+        tokens = generate.generate(jax.random.PRNGKey(0),
+                                   model=model,
+                                   weights=state.params,
+                                   context=train_dataset.encode(context),
+                                   block_size=16,
+                                   top_k=10)
+        print(f"step {state.step}: ")
+        print(context, end='')
+        for t in itertools.islice(tokens, 500):
+            print(train_dataset.itos[int(t)], end='')  # type: ignore
+        print()
+
     def print_loss(_xs, _y, loss, _aux, state):
         print(f"step {state.step} loss {loss}")
+
+    trainer.add_callback(step_interval=2,
+                         fn=functools.partial(generate_text,
+                                              context="aaaaaaaaaaaaaaaa"))
 
     trainer.add_callback(step_interval=1, fn=print_loss)
 

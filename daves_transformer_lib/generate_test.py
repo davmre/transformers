@@ -42,7 +42,8 @@ class GenerateTests(parameterized.TestCase):
         tokens = generate.generate(key,
                                    model=model,
                                    weights=weights,
-                                   context=xs)
+                                   context=xs,
+                                   block_size=model.block_size)
         self.assertSequenceEqual(list(itertools.islice(tokens, 0, 10)),
                                  [1, 2, 3, 0, 1, 2, 3, 0, 1, 2])
 
@@ -78,11 +79,13 @@ class GenerateTests(parameterized.TestCase):
             # affect how the cache works.
             use_position_embeddings=False)
         weights = model.init(jax.random.PRNGKey(0), xs)
-        tokens_with_lps_no_cache = generate.generate(key,
-                                                     model=model,
-                                                     weights=weights,
-                                                     context=xs,
-                                                     include_logprobs=True)
+        tokens_with_lps_no_cache = generate.generate(
+            key,
+            model=model,
+            weights=weights,
+            context=xs,
+            block_size=model.block_size,
+            include_logprobs=True)
 
         tokens_with_lps = generate.generate_with_kv_cache(key,
                                                           model=model,

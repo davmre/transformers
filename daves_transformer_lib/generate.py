@@ -21,14 +21,14 @@ def generate_step(
     context_length: int,
     top_k: Optional[int] = None,
     temperature: Float = 1.0,
-    kv_caches: Optional[List[KeyValueCache]] = None,
+    hidden_context: Optional[List[KeyValueCache]] = None,
 ) -> Tuple[Int[Array, ""], Float[Array, "vocab_size"],
            Optional[List[KeyValueCache]]]:
     forward_key, sample_key = jax.random.split(key)
-    all_logits, kv_caches = model.apply(weights,
-                                        context,
-                                        kv_caches=kv_caches,
-                                        rngs=model.rngs(forward_key))
+    all_logits, hidden_context = model.apply(weights,
+                                             context,
+                                             hidden_context=hidden_context,
+                                             rngs=model.rngs(forward_key))
     logits = all_logits[...,  # type: jax.Array
                         context_length - 1, :] / temperature
     if top_k is not None:
@@ -38,13 +38,14 @@ def generate_step(
                            logits)  # type: jax.Array
     probs = jax.nn.softmax(logits)
     c = jax.random.choice(sample_key, logits.shape[-1], shape=(), p=probs)
-    return c, jax.nn.log_softmax(logits), kv_caches
+    return c, jax.nn.log_softmax(logits), hidden_context
 
 
 def generate(key: jax.random.KeyArray,
              model,
              weights: PyTree,
              context: Int[Array, 'num_positions'],
+             block_size: int,
              context_length: Optional[int] = None,
              top_k: Optional[int] = None,
              temperature: Float = 1.0,
@@ -54,11 +55,10 @@ def generate(key: jax.random.KeyArray,
     if context_length is None:
         context_length = context.shape[-1]
     assert (context_length > 0)
-    context = jnp.concatenate([
-        context,
-        jnp.zeros([model.block_size - len(context)], dtype=context.dtype)
-    ],
-                              axis=-1)
+    context = jnp.concatenate(
+        [context,
+         jnp.zeros([block_size - len(context)], dtype=context.dtype)],
+        axis=-1)
     while True:
         gen_key, key = jax.random.split(key)
         c, log_probs, _ = generate_step(model,
@@ -68,15 +68,15 @@ def generate(key: jax.random.KeyArray,
                                         context_length=context_length,
                                         top_k=top_k,
                                         temperature=temperature,
-                                        kv_caches=None)
+                                        hidden_context=None)
 
         # Add the generated character to the context for the next step.
-        if context_length < model.block_size:
+        if context_length < block_size:
             context = context.at[context_length].set(c)
         else:
             context = jnp.concatenate(
                 [context[1:], jnp.array([c], dtype=context.dtype)])
-        context_length = min(context_length + 1, model.block_size)
+        context_length = min(context_length + 1, block_size)
 
         if include_logprobs:
             yield c, log_probs
@@ -84,25 +84,26 @@ def generate(key: jax.random.KeyArray,
             yield c
 
 
-def generate_with_kv_cache(key: jax.random.KeyArray,
-                           model,
-                           weights: PyTree,
-                           context: Array,
-                           top_k: Optional[int] = None,
-                           temperature: Float = 1.0,
-                           include_logprobs: bool = False):
+def generate_recurrent(key: jax.random.KeyArray,
+                       model,
+                       weights: PyTree,
+                       context: Array,
+                       top_k: Optional[int] = None,
+                       temperature: Float = 1.0,
+                       include_logprobs: bool = False):
 
-    kv_caches = model.initialize_kv_caches()
+    hidden_context = model.initialize_hidden_context()
     while True:
         gen_key, key = jax.random.split(key)
-        c, log_probs, kv_caches = generate_step(model,
-                                                key=gen_key,
-                                                weights=weights,
-                                                context=context,
-                                                context_length=len(context),
-                                                top_k=top_k,
-                                                temperature=temperature,
-                                                kv_caches=kv_caches)
+        c, log_probs, hidden_context = generate_step(
+            model,
+            key=gen_key,
+            weights=weights,
+            context=context,
+            context_length=len(context),
+            top_k=top_k,
+            temperature=temperature,
+            hidden_context=hidden_context)
         # Pass only the incremental new context since all relevant previous
         # context is stored in the KV cache.
         context = jnp.array([c])

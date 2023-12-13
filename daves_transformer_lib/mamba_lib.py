@@ -133,6 +133,8 @@ class MambaBlock(nn.Module):
                                   kernel_size=[self.d_conv],
                                   feature_group_count=d_inner,
                                   padding='CAUSAL')
+        self.passthrough_param = self.param('passthrough',
+                                            nn.initializers.constant(1.), ())
 
     def __call__(self, xs, initial_hidden=None):
         # xs: [L, D]
@@ -143,9 +145,9 @@ class MambaBlock(nn.Module):
         xs, zs = jnp.split(xzs, 2, axis=-1)  # each [L, DE]
 
         xs = activation_fn(self.conv_layer(xs))
-        xs, _ = self.ssm_layer(xs, initial_hidden=initial_hidden)
-
-        return self.output_proj(xs * activation_fn(zs))
+        ys, _ = self.ssm_layer(xs, initial_hidden=initial_hidden)
+        ys = ys + self.passthrough_param * xs
+        return self.output_proj(ys * activation_fn(zs))
 
 
 class ResidualBlock(nn.Module):
@@ -157,7 +159,7 @@ class ResidualBlock(nn.Module):
     def __call__(self, xs):
         # xs: [L, D]
         ys = self.layer(xs)
-        return ys + self.norm(ys)
+        return self.norm(xs + ys)
 
 
 class MambaLanguageModel(nn.Module):
@@ -173,7 +175,7 @@ class MambaLanguageModel(nn.Module):
         return {}
 
     @nn.compact
-    def __call__(self, xs):
+    def __call__(self, xs, hidden_context=None):
         # xs: [L] ints
         num_positions = xs.shape[-1]
         token_embed = nn.Embed(num_embeddings=self.n_tokens,

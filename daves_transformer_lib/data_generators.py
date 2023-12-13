@@ -74,6 +74,72 @@ class CharDataset(Dataset):
         return x, y
 
 
+class ConstDataset(Dataset):
+    """
+    Emits sequences each of which contains a single repeated character.
+
+    Used as a sanity-check since any model should be able to fit perfectly.
+    """
+
+    def __init__(self, block_size: int, chars='abcdefghijklmnopqrstuvwxyz'):
+
+        vocab_size = len(chars)
+        self.stoi = {ch: i for i, ch in enumerate(chars)}
+        self.itos = {i: ch for i, ch in enumerate(chars)}
+        self.vocab_size = vocab_size
+        self.block_size = block_size
+
+    def encode(self, s: str) -> jax.Array:
+        return jnp.array([self.stoi[c] for c in s], dtype=jnp.int32)
+
+    def decode(self, x) -> str:
+        return str([self.itos[int(i)] for i in x])
+
+    def __len__(self):
+        return self.vocab_size
+
+    def __getitem__(
+            self, idx: Int
+    ) -> Tuple[Int[Array, 'block_size'], Int[Array, 'block_size']]:
+        x = jnp.tile(idx % self.vocab_size, [self.block_size])
+        y = x
+        return x, y
+
+
+class AlternatingDataset(Dataset):
+    """
+    Emits sequences each of which contains two characters alternating.
+
+    Used as a sanity-check since any model should be able to fit perfectly.
+    """
+
+    def __init__(self, block_size: int, chars='abcdefghijklmnopqrstuvwxyz'):
+
+        vocab_size = len(chars)
+        self.stoi = {ch: i for i, ch in enumerate(chars)}
+        self.itos = {i: ch for i, ch in enumerate(chars)}
+        self.vocab_size = vocab_size
+        self.block_size = block_size
+
+    def encode(self, s: str) -> jax.Array:
+        return jnp.array([self.stoi[c] for c in s], dtype=jnp.int32)
+
+    def decode(self, x) -> str:
+        return str([self.itos[int(i)] for i in x])
+
+    def __len__(self):
+        return self.vocab_size**2
+
+    def __getitem__(
+            self, idx: Int
+    ) -> Tuple[Int[Array, 'block_size'], Int[Array, 'block_size']]:
+        c1 = idx % self.vocab_size
+        c2 = idx // self.vocab_size
+        x = jnp.tile(jnp.asarray([c1, c2]), [self.block_size / 2])
+        y = jnp.tile(jnp.asarray([c2, c1]), [self.block_size / 2])
+        return x, y
+
+
 def character_generator(dataset, batch_size: Optional[int] = None):
     max_idx = len(dataset)
 

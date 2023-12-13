@@ -1,3 +1,4 @@
+import math
 from typing import Callable, Dict, List, Optional, Tuple
 
 from jaxtyping import Array
@@ -28,37 +29,47 @@ def inverse_softplus(x):
 def s4d_real_initializer(key, shape):
     del key
     N = shape[-1]
-    return jnp.tile(jnp.log((jnp.arange(N) + 1.)), tuple(shape[:-1]) + (1,))
-
-
-def make_delta_initializer(dt_min=0.001, dt_max=1.0):
-
-    def delta_initializer(key, shape):
-        dt = jnp.exp(
-            jax.random.uniform(key, shape) *
-            (jnp.log(dt_max) - jnp.log(dt_min)) + jnp.log(dt_min))
-        return inverse_softplus(dt)
-
-    return delta_initializer
+    return jnp.tile(jnp.log(jnp.arange(1, N + 1)), tuple(shape[:-1]) + (1,))
 
 
 class SelectiveSSM(nn.Module):
-    N: int  # num_state_dims_per_channel
-    D: int  # num_channels
+    d_state: int  # N
+    d_inner: int  # D
+    dt_rank: int = 1
+    dt_scale: float = 1.0
+    dt_min: float = 0.001
+    dt_max: float = 1.0
+
+    def _dt_weight_initializer(self, key, shape, dtype=jnp.float32):
+        dt_init_std = self.dt_rank**-0.5 * self.dt_scale
+        return jax.random.uniform(key,
+                                  shape,
+                                  dtype=dtype,
+                                  minval=-dt_init_std,
+                                  maxval=dt_init_std)
+
+    def _dt_bias_initializer(self, key, shape, dtype=jnp.float32):
+        dt = jnp.exp(
+            jax.random.uniform(key, shape, dtype=dtype) *
+            (jnp.log(self.dt_max) - jnp.log(self.dt_min)) +
+            jnp.log(self.dt_min))
+        return inverse_softplus(dt)
 
     def setup(self):
-        self.s_B = nn.Dense(self.N)
-        self.s_C = nn.Dense(self.N)
-        self.s_Delta1 = nn.Dense(1)
+        self.x_proj = nn.Dense(self.dt_rank + self.d_state * 2, use_bias=False)
+        self.dt_proj = nn.Dense(self.d_inner,
+                                kernel_init=self._dt_weight_initializer,
+                                bias_init=self._dt_bias_initializer,
+                                use_bias=True)
         self.log_neg_Adiag = self.param("log_neg_Adiag", s4d_real_initializer,
-                                        [self.D, self.N])
-        self.delta_param = self.param("delta_param", make_delta_initializer(),
-                                      [self.D])
+                                        [self.d_inner, self.d_state])
 
     def _local_params(self, xs: Float[Array, "num_positions num_channels"]):
-        Bs = self.s_B(xs[..., jnp.newaxis])  # [L, D, N]
-        Cs = self.s_C(xs[..., jnp.newaxis])  # [L, D, N]
-        Delta = jax.nn.softplus(self.delta_param + self.s_Delta1(xs))  # [L, D]
+        proj = self.x_proj(xs)  # [L, 2N + 1]
+        Bs, Cs, delta_tmp = jnp.split(proj,
+                                      np.cumsum([self.d_state, self.d_state]),
+                                      axis=-1)
+        Delta = jax.nn.softplus(self.dt_proj(delta_tmp))  # [L, D]
         return Bs, Cs, Delta
 
     def _discretize(self, Delta, B):
@@ -72,10 +83,10 @@ class SelectiveSSM(nn.Module):
         #  Abar_diag: [..., D, N]
         #  Bbar: [..., D, N]
         Adiag = -jnp.exp(self.log_neg_Adiag)
-        log_Abar_diag = Delta[..., jnp.newaxis] * Adiag  # [D, N]
+        log_Abar_diag = Delta[..., jnp.newaxis] * Adiag  # [..., D, N]
         Abar_diag = jnp.exp(log_Abar_diag)
-        Bbar = 1. / log_Abar_diag * (Abar_diag - 1.) * Delta[...,
-                                                             jnp.newaxis] * B
+        Bbar = (1. / log_Abar_diag * (Abar_diag - 1.) *
+                Delta[..., jnp.newaxis] * B[..., jnp.newaxis, :])
         return Abar_diag, Bbar
 
     def __call__(
@@ -94,7 +105,7 @@ class SelectiveSSM(nn.Module):
 
         _, hs = jax.lax.associative_scan(parallel_scan_op_fn,
                                          (Abar_diag, Bxs))  # [L, D, N]
-        ys = jnp.sum(hs * Cs, axis=-1)
+        ys = jnp.sum(hs * Cs[..., jnp.newaxis, :], axis=-1)
         return ys, hs
 
     def step(self, h_t_minus_1, x_t):
@@ -120,6 +131,7 @@ class MambaBlock(nn.Module):
         self.output_proj = nn.Dense(self.d_model)
         self.conv_layer = nn.Conv(features=d_inner,
                                   kernel_size=[self.d_conv],
+                                  feature_group_count=d_inner,
                                   padding='CAUSAL')
 
     def __call__(self, xs, initial_hidden=None):
@@ -174,8 +186,9 @@ class MambaLanguageModel(nn.Module):
                 MambaBlock(d_model=self.d_model,
                            d_conv=self.d_conv,
                            expand=self.expand,
-                           ssm_layer=SelectiveSSM(D=self.d_model * self.expand,
-                                                  N=self.d_state)))
+                           ssm_layer=SelectiveSSM(d_inner=self.d_model *
+                                                  self.expand,
+                                                  d_state=self.d_state)))
             zs = layer(zs)
 
         zs = nn.LayerNorm()(zs)

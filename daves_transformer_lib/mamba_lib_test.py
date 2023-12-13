@@ -25,7 +25,7 @@ class SelectiveSSMTest(parameterized.TestCase):
 
         xs = jax.random.normal(k1, [L, D])
         h0 = jax.random.normal(k3, [D, N])
-        ssm = mamba_lib.SelectiveSSM(N=N, D=D)
+        ssm = mamba_lib.SelectiveSSM(d_state=N, d_inner=D)
         params = ssm.init(k2, xs)
 
         # Run the SSM one step at a time.
@@ -44,47 +44,11 @@ class SelectiveSSMTest(parameterized.TestCase):
         np.testing.assert_allclose(hs1, hs2, rtol=1e-5)  # type: ignore
         np.testing.assert_allclose(ys1, ys2, rtol=1e-5)
 
-    def test_1d_ssm_recovers_leaky_integrator(self, L=5):
-        key = jax.random.PRNGKey(0)
-        k1, k2 = jax.random.split(key, 2)
-
-        ssm = mamba_lib.SelectiveSSM(N=1, D=1)
-        xs = jax.random.normal(k1, [L, 1])
-        params = {
-            'params': {
-                'log_neg_Adiag': [[0.]],
-                'delta_param': [0.],
-                's_B': {
-                    'kernel': [[0.]],
-                    'bias': [1.]
-                },
-                's_C': {
-                    'kernel': [[0.]],
-                    'bias': [1.]
-                },
-                's_Delta1': {
-                    'kernel': [[0.2]],
-                    'bias': [0.1]
-                }
-            }
-        }
-        params = tree.map_structure_up_to(ssm.init(k2, xs), jnp.asarray, params)
-
-        h_t = jnp.asarray([0.])
-        for t in range(L):
-            x_t = xs[t]
-            g_t = jax.nn.sigmoid(0.2 * x_t + 0.1)
-            new_h_t = (1 - g_t) * h_t + g_t * x_t
-
-            new_h_t_ssm, y = ssm.apply(params, h_t, x_t, method=ssm.step)
-            self.assertAlmostEqual(new_h_t, new_h_t_ssm[0])
-            h_t = new_h_t
-
     def test_inititialization(self):
         key = jax.random.PRNGKey(0)
         k1, k2 = jax.random.split(key, 2)
 
-        ssm = mamba_lib.SelectiveSSM(N=4, D=2)
+        ssm = mamba_lib.SelectiveSSM(d_state=4, d_inner=2)
         xs = jax.random.normal(k1, [5, 1])
         params = ssm.init(k2, xs)
         np.testing.assert_allclose(params['params']['log_neg_Adiag'],

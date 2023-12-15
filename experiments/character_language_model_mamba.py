@@ -28,7 +28,7 @@ config.model.d_model = 96
 config.train = config_dict.ConfigDict()
 config.train.weight_decay = 0.1
 config.train.num_steps = 5000
-config.train.checkpoint_interval = 500
+config.train.checkpoint_interval = 250
 config.train.log_dir = '/tmp/mamba'
 config.batch_size = 64
 config.seed = 0
@@ -76,7 +76,8 @@ def do_training(config, text):
     print("Devices", jax.devices())
 
     # construct the training dataset
-    train_dataset = data_generators.ConstDataset(block_size=64)
+    #train_dataset = data_generators.AlternatingDataset(block_size=64)
+    train_dataset = data_generators.CharDataset(text, block_size=128)
     g = data_generators.character_generator(train_dataset,
                                             batch_size=config.batch_size)
 
@@ -122,17 +123,19 @@ def do_training(config, text):
                                    top_k=10)
         print(f"step {state.step}: ")
         print(context, end='')
-        for t in itertools.islice(tokens, 500):
+        for t in itertools.islice(tokens, 128):
             print(train_dataset.itos[int(t)], end='')  # type: ignore
         print()
 
     def print_loss(_xs, _y, loss, _aux, state):
         print(f"step {state.step} loss {loss}")
 
-    trainer.add_callback(step_interval=2,
+    #trainer.add_callback(step_interval=2,
+    #                     fn=functools.partial(generate_text,
+    #                                          context="azazazazazazazaz"))
+    trainer.add_callback(step_interval=25,
                          fn=functools.partial(generate_text,
-                                              context="aaaaaaaaaaaaaaaa"))
-
+                                              context="O God, O God! "))
     trainer.add_callback(step_interval=1, fn=print_loss)
 
     state = trainer.run(key=key, state=state, num_steps=config.train.num_steps)

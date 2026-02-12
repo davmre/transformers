@@ -23,11 +23,11 @@ class IncrementModel(nn.Module):
         return {}
 
     @nn.compact
-    def __call__(self, xs, kv_caches=None):
+    def __call__(self, xs, hidden_context=None):
         desired_ys = (xs + 1) % self.vocab_size
         logits = 10 * jax.nn.one_hot(
             desired_ys, num_classes=self.vocab_size, axis=-1)
-        return logits, kv_caches
+        return logits, hidden_context
 
 
 class GenerateTests(parameterized.TestCase):
@@ -87,11 +87,11 @@ class GenerateTests(parameterized.TestCase):
             block_size=model.block_size,
             include_logprobs=True)
 
-        tokens_with_lps = generate.generate_with_kv_cache(key,
-                                                          model=model,
-                                                          weights=weights,
-                                                          context=xs,
-                                                          include_logprobs=True)
+        tokens_with_lps = generate.generate_recurrent(key,
+                                                      model=model,
+                                                      weights=weights,
+                                                      context=xs,
+                                                      include_logprobs=True)
 
         for i in range(model.block_size +
                        (0 if limit_to_context_length else 10)):

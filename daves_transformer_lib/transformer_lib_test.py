@@ -171,12 +171,14 @@ class TransformerTests(parameterized.TestCase):
                                         model=model,
                                         weights=weights,
                                         context=context1,
+                                        block_size=model.block_size,
                                         context_length=1,
                                         include_logprobs=True)
         t_with_lps2 = generate.generate(key=key,
                                         model=model,
                                         weights=weights,
                                         context=context2,
+                                        block_size=model.block_size,
                                         context_length=1,
                                         include_logprobs=True)
 

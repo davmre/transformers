@@ -84,15 +84,15 @@ class AdditionModel(nn.Module):
                                (num_bits, d_model))
         zs = nn.Dense(d_model, dtype=self.internal_dtype)(xs) + positions
 
-        transformer_layer = transformer_lib.EncoderLayer(
+        transformer_layer = transformer_lib.TransformerBlock(
             size=d_model,
             self_attn=transformer_lib.MultiHeadedAttention(
                 self.num_heads, d_model, dropout=self.dropout),
             feed_forward=transformer_lib.PositionwiseFeedForward(
-                d_model, self.d_ff, dropout=self.dropout),
+                d_model, self.d_ff),
             dropout=self.dropout)
         for _ in range(self.num_iters):
-            zs = transformer_layer(zs, mask=None)
+            zs, _ = transformer_layer(zs, mask=None)
 
         ys = nn.Dense(1, dtype=self.internal_dtype)(zs)
         return ys

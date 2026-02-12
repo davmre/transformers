@@ -1,24 +1,18 @@
 import functools
 import itertools
 
-from absl import app
-from ml_collections import config_dict
-from ml_collections import config_flags
-import modal
-import tree
-
 import jax
-from jax import numpy as jnp
+import modal
 import numpy as np
-
-from flax import linen as nn
 import optax
 import orbax.checkpoint
+import tree
+from absl import app
+from flax import linen as nn
+from jax import numpy as jnp
+from ml_collections import config_dict, config_flags
 
-from daves_transformer_lib import data_generators
-from daves_transformer_lib import generate
-from daves_transformer_lib import train
-from daves_transformer_lib import transformer_lib
+from daves_transformer_lib import data_generators, generate, train, transformer_lib
 
 config = config_dict.ConfigDict()
 config.model = config_dict.ConfigDict()
@@ -29,13 +23,13 @@ config.model.d_ff = 192 * 4
 config.model.dropout_rate = 0.1
 config.train = config_dict.ConfigDict()
 config.train.weight_decay = 0.1
-config.train.num_steps = 5000
+config.train.num_steps = 5
 config.train.checkpoint_interval = 500
-config.train.log_dir = '/tmp/gpt'
+config.train.log_dir = "/tmp/gpt"
 config.batch_size = 64
 config.seed = 0
 
-_CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
+_CONFIG = config_flags.DEFINE_config_dict("ml_config", config)
 
 # Remote training with Modal: follow getting-started instructions at
 # https://modal.com/home
@@ -50,7 +44,8 @@ _CONFIG = config_flags.DEFINE_config_dict('ml_config', config)
 # non-hidden files? )
 stub = modal.Stub(name="chargpt")
 image = modal.Image.debian_slim().pip_install_from_requirements(
-    '/Users/dave/code/transformers/requirements.txt')
+    "/Users/dave/code/transformers/requirements.txt"
+)
 volume = modal.NetworkFileSystem.new().persisted("chargpt-checkpoints")
 
 
@@ -58,16 +53,15 @@ def weight_decay_mask(params):
 
     def f(p, x):
         # Apply weight decay only to weight matrices of Dense layers.
-        weight_decay = (p[-1] == 'kernel')
+        weight_decay = p[-1] == "kernel"
         return weight_decay
 
     return tree.map_structure_with_path(f, params)
 
 
-@stub.function(image=image,
-               network_file_systems={"/tmp/gpt": volume},
-               gpu="any",
-               timeout=3600)
+@stub.function(
+    image=image, network_file_systems={"/tmp/gpt": volume}, gpu="any", timeout=3600
+)
 def do_training(config, text):
     key = jax.random.PRNGKey(config.seed)
     np.random.seed(config.seed)  # For data loading.
@@ -77,20 +71,19 @@ def do_training(config, text):
 
     # construct the training dataset
     train_dataset = data_generators.CharDataset(text, block_size=128)
-    g = data_generators.character_generator(train_dataset,
-                                            batch_size=config.batch_size)
+    g = data_generators.character_generator(train_dataset, batch_size=config.batch_size)
 
-    model = transformer_lib.GPTModel(vocab_size=train_dataset.vocab_size,
-                                     num_heads=config.model.num_heads,
-                                     num_layers=config.model.num_layers,
-                                     d_model=config.model.d_model,
-                                     d_ff=config.model.d_ff,
-                                     num_ff_experts=1,
-                                     num_ff_experts_active=1,
-                                     block_size=train_dataset.block_size,
-                                     dropout=nn.Dropout(
-                                         rate=config.model.dropout_rate,
-                                         deterministic=False))
+    model = transformer_lib.GPTModel(
+        vocab_size=train_dataset.vocab_size,
+        num_heads=config.model.num_heads,
+        num_layers=config.model.num_layers,
+        d_model=config.model.d_model,
+        d_ff=config.model.d_ff,
+        num_ff_experts=1,
+        num_ff_experts_active=1,
+        block_size=train_dataset.block_size,
+        dropout=nn.Dropout(rate=config.model.dropout_rate, deterministic=False),
+    )
 
     trainer = train.Trainer(
         config=config.train,
@@ -101,7 +94,9 @@ def do_training(config, text):
         checkpoint_options=orbax.checkpoint.CheckpointManagerOptions(
             save_interval_steps=config.train.checkpoint_interval,
             create=True,
-            max_to_keep=3))
+            max_to_keep=3,
+        ),
+    )
     key, init_key = jax.random.split(key)
     params = trainer.init_parameters(key=init_key)
 
@@ -110,33 +105,37 @@ def do_training(config, text):
 
     optimizer = optax.chain(
         optax.clip_by_global_norm(1.0),
-        optax.adamw(5e-4,
-                    b1=0.9,
-                    b2=0.95,
-                    weight_decay=config.train.weight_decay,
-                    mask=weight_decay_mask(params)),
+        optax.adamw(
+            5e-4,
+            b1=0.9,
+            b2=0.95,
+            weight_decay=config.train.weight_decay,
+            mask=weight_decay_mask(params),
+        ),
     )
     state = trainer.init(params, optimizer)
 
-    def generate_text(_xs, _y, _loss, _aux, state, context=' ', verbose=False):
-        tokens = generate.generate(jax.random.PRNGKey(0),
-                                   model=model,
-                                   weights=state.params,
-                                   context=train_dataset.encode(context),
-                                   top_k=10,
-                                   block_size=model.block_size)
+    def generate_text(_xs, _y, _loss, _aux, state, context=" ", verbose=False):
+        tokens = generate.generate(
+            jax.random.PRNGKey(0),
+            model=model,
+            weights=state.params,
+            context=train_dataset.encode(context),
+            top_k=10,
+            block_size=model.block_size,
+        )
         print(f"step {state.step}: ")
-        print(context, end='')
+        print(context, end="")
         for t in itertools.islice(tokens, 500):
-            print(train_dataset.itos[int(t)], end='')  # type: ignore
+            print(train_dataset.itos[int(t)], end="")  # type: ignore
         print()
 
     def print_loss(_xs, _y, loss, _aux, state):
         print(f"step {state.step} loss {loss}")
 
-    trainer.add_callback(step_interval=25,
-                         fn=functools.partial(generate_text,
-                                              context="O God, O God! "))
+    trainer.add_callback(
+        step_interval=25, fn=functools.partial(generate_text, context="O God, O God! ")
+    )
     trainer.add_callback(step_interval=1, fn=print_loss)
 
     state = trainer.run(key=key, state=state, num_steps=config.train.num_steps)
@@ -144,19 +143,19 @@ def do_training(config, text):
 
 @stub.local_entrypoint()
 def modal_main():
-    #config = _CONFIG.value
+    # config = _CONFIG.value
     global config
-    with open('experiments/data/shakespear.txt', 'r') as f:
+    with open("experiments/data/shakespear.txt", "r") as f:
         text = f.read()
     do_training.remote(config, text)
 
 
 def main(_):
-    with open('experiments/data/shakespear.txt', 'r') as f:
+    with open("experiments/data/shakespear.txt", "r") as f:
         text = f.read()
     config = _CONFIG.value
     do_training.local(config, text)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(main)

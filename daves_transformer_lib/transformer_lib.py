@@ -3,16 +3,11 @@ import functools
 import math
 from typing import Callable, Dict, List, Optional, Tuple, Type
 
-from jaxtyping import Array
-from jaxtyping import Float
-from jaxtyping import Int
-from jaxtyping import PyTree
-
 import jax
-from jax import numpy as jnp
-
 from flax import linen as nn
 from flax import struct
+from jax import numpy as jnp
+from jaxtyping import Array, Float, Int, PyTree
 
 
 @struct.dataclass
@@ -25,37 +20,47 @@ class KeyValueCache:
         return self.cache.shape[-2]
 
     def update(
-        self, key_value: Float[Array, "num_new_positions twice_d_model"],
-        mask: Optional[Float[Array, "num_new_positions num_new_positions"]]
-    ) -> Tuple["KeyValueCache", Float[Array, "num_positions twice_d_model"],
-               Float[Array, "num_new_positions num_positions"]]:
+        self,
+        key_value: Float[Array, "num_new_positions twice_d_model"],
+        mask: Optional[Float[Array, "num_new_positions num_new_positions"]],
+    ) -> Tuple[
+        "KeyValueCache",
+        Float[Array, "num_positions twice_d_model"],
+        Float[Array, "num_new_positions num_positions"],
+    ]:
         num_new_positions = key_value.shape[-2]
-        assert (num_new_positions < self.cache_size)
+        assert num_new_positions < self.cache_size
 
-        new_valid_size = jnp.minimum(self.cache_size,
-                                     self.valid_size + num_new_positions)
+        new_valid_size = jnp.minimum(
+            self.cache_size, self.valid_size + num_new_positions
+        )
 
         # Add the cached positions.
-        key_value = jnp.concatenate([self.cache[num_new_positions:], key_value],
-                                    axis=-2)
+        key_value = jnp.concatenate(
+            [self.cache[num_new_positions:], key_value], axis=-2
+        )
 
         # Augment the mask to attend only to positions where the cache
         # is valid. The augmented mask has dimension
         # `[num_new_positions, cache_size]`.
         if mask is None:
             # Create a dummy mask if needed.
-            mask = jnp.ones([num_new_positions, num_new_positions],
-                            dtype=self.cache.dtype)
+            mask = jnp.ones(
+                [num_new_positions, num_new_positions], dtype=self.cache.dtype
+            )
 
         # cache size 5
         # valid size 1
         # new positions 1
         # we want a 4-sequence in which final 2 entries are 1
         cache_validity_indicators = jnp.where(
-            jnp.arange(self.cache_size - num_new_positions, 0, -1) <=
-            self.valid_size, 1., 0.)
-        cache_validity_mask = cache_validity_indicators[
-            jnp.newaxis, :] * jnp.ones([num_new_positions, 1])
+            jnp.arange(self.cache_size - num_new_positions, 0, -1) <= self.valid_size,
+            1.0,
+            0.0,
+        )
+        cache_validity_mask = cache_validity_indicators[jnp.newaxis, :] * jnp.ones(
+            [num_new_positions, 1]
+        )
         mask = jnp.concatenate([cache_validity_mask, mask], axis=-1)
 
         # Update the cache for the next step.
@@ -65,8 +70,9 @@ class KeyValueCache:
 
 
 def causal_dependence(
-        num_positions: int) -> Float[Array, "num_positions num_positions"]:
-    #r = jnp.arange(num_positions)
+    num_positions: int,
+) -> Float[Array, "num_positions num_positions"]:
+    # r = jnp.arange(num_positions)
     # rows index outputs, columns inputs
     return jnp.tril(jnp.ones([num_positions, num_positions]))
 
@@ -93,19 +99,23 @@ class NaiveSparseMixtureOfExpertsLayer(nn.Module):
         # Networks: The Sparsely-Gated Mixture-of-Experts Layer,
         # https://arxiv.org/abs/1701.06538 sec 2.1)
         print("calling with x", x.shape)
-        logits = nn.Dense(self.num_experts, name='experts_linear')(x)
+        logits = nn.Dense(self.num_experts, name="experts_linear")(x)
         jitter_scales = nn.softplus(
-            nn.Dense(self.num_experts, name='experts_jitter_scales_linear')(x))
+            nn.Dense(self.num_experts, name="experts_jitter_scales_linear")(x)
+        )
         jitter = jitter_scales * jax.random.normal(
-            key=self.make_rng('expert_choice'), shape=jitter_scales.shape)
+            key=self.make_rng("expert_choice"), shape=jitter_scales.shape
+        )
 
         # Select only the top experts and return a weighted sum of their
         # contributions.
         # TODO(davmre): investigate speed of top_k vs argmax (cf https://github.com/google/jax/issues/9940)
         selected_logits, selected_expert_idxs = jax.lax.top_k(
-            logits + jitter, self.num_active_experts)
-        sparse_logits = jnp.zeros_like(logits).at[selected_expert_idxs].set(
-            selected_logits)
+            logits + jitter, self.num_active_experts
+        )
+        sparse_logits = (
+            jnp.zeros_like(logits).at[selected_expert_idxs].set(selected_logits)
+        )
         gate_probs = nn.softmax(sparse_logits)
 
         # Run the input through all experts in parallel, then sum the results according
@@ -121,28 +131,28 @@ class NaiveSparseMixtureOfExpertsLayer(nn.Module):
         batch_of_experts = nn.vmap(
             self.sublayer,
             axis_size=self.num_experts,
-            variable_axes={'params': 0},
-            split_rngs={'params': True},
-            in_axes=None  # type: ignore
+            variable_axes={"params": 0},
+            split_rngs={"params": True},
+            in_axes=None,  # type: ignore
         )(*self.sublayer_args, **self.sublayer_kwargs)
         results = batch_of_experts(x)
         return jnp.sum(gate_probs[..., jnp.newaxis] * results, axis=0)
 
 
 class MultiHeadedAttention(nn.Module):
-
     h: int
     d_model: int
     dropout: nn.Module
 
     def setup(self):
         self.d_k = self.d_model // self.h
-        self.q_linear = nn.Dense(self.d_model,
-                                 kernel_init=nn.initializers.normal(0.02))
-        self.kv_linear = nn.Dense(self.d_model * 2,
-                                  kernel_init=nn.initializers.normal(0.02))
-        self.final_linear = nn.Dense(self.d_model,
-                                     kernel_init=nn.initializers.normal(0.02))
+        self.q_linear = nn.Dense(self.d_model, kernel_init=nn.initializers.normal(0.02))
+        self.kv_linear = nn.Dense(
+            self.d_model * 2, kernel_init=nn.initializers.normal(0.02)
+        )
+        self.final_linear = nn.Dense(
+            self.d_model, kernel_init=nn.initializers.normal(0.02)
+        )
 
     def split_heads(self, x):
         return jnp.reshape(x, x.shape[:-1] + (self.h, -1))
@@ -154,9 +164,8 @@ class MultiHeadedAttention(nn.Module):
         self,
         x: Float[Array, "... num_positions d_model"],
         mask: Optional[Float[Array, "num_positions num_positions"]] = None,
-        kv_cache: Optional[KeyValueCache] = None
-    ) -> Tuple[Float[Array, "... num_positions d_model"],
-               Optional[KeyValueCache]]:
+        kv_cache: Optional[KeyValueCache] = None,
+    ) -> Tuple[Float[Array, "... num_positions d_model"], Optional[KeyValueCache]]:
         num_input_positions = x.shape[-2]
 
         query = self.q_linear(x)
@@ -175,7 +184,8 @@ class MultiHeadedAttention(nn.Module):
         value = jnp.swapaxes(value, -3, -2)
 
         scores = jnp.matmul(query, jnp.swapaxes(key, -2, -1)) / jnp.sqrt(
-            float(self.d_k))
+            float(self.d_k)
+        )
         if mask is not None:
             scores = jnp.where(mask == 0, -1e9, scores)
         p_attn = jax.nn.softmax(scores, axis=-1)
@@ -191,21 +201,21 @@ class MultiHeadedAttention(nn.Module):
 
 class PositionwiseFeedForward(nn.Module):
     "Implements FFN equation."
+
     d_model: int
     d_ff: int
     w1_init_stddev: float = 0.02
     w2_init_stddev: float = 0.02
 
     def setup(self):
-        self.w_1 = nn.Dense(self.d_ff,
-                            kernel_init=nn.initializers.normal(
-                                self.w1_init_stddev))
-        self.w_2 = nn.Dense(self.d_model,
-                            kernel_init=nn.initializers.normal(
-                                self.w2_init_stddev))
+        self.w_1 = nn.Dense(
+            self.d_ff, kernel_init=nn.initializers.normal(self.w1_init_stddev)
+        )
+        self.w_2 = nn.Dense(
+            self.d_model, kernel_init=nn.initializers.normal(self.w2_init_stddev)
+        )
 
-    def __call__(self, x: Float[Array,
-                                "... d_model"]) -> Float[Array, "... d_model"]:
+    def __call__(self, x: Float[Array, "... d_model"]) -> Float[Array, "... d_model"]:
         return self.w_2(jax.nn.gelu(self.w_1(x)))
 
 
@@ -248,79 +258,90 @@ class GPTModel(nn.Module):
 
     def rngs(self, key: jax.random.KeyArray):
         dropout_key, expert_choice_key = jax.random.split(key)
-        rngs = {'dropout': dropout_key, 'expert_choice': expert_choice_key}
+        rngs = {"dropout": dropout_key, "expert_choice": expert_choice_key}
         return rngs
 
     def initialize_hidden_context(self) -> List[KeyValueCache]:
         return [
-            KeyValueCache(cache=jnp.zeros([self.block_size, self.d_model * 2],
-                                          dtype=self.internal_dtype),
-                          valid_size=0) for _ in range(self.num_layers)
+            KeyValueCache(
+                cache=jnp.zeros(
+                    [self.block_size, self.d_model * 2], dtype=self.internal_dtype
+                ),
+                valid_size=0,
+            )
+            for _ in range(self.num_layers)
         ]
 
     @nn.compact
     def __call__(
         self,
         xs: Int[Array, "... num_positions"],
-        hidden_context: Optional[List[KeyValueCache]] = None
-    ) -> Tuple[Float[Array, "... num_positions vocab_size"],
-               Optional[List[KeyValueCache]]]:
+        hidden_context: Optional[List[KeyValueCache]] = None,
+    ) -> Tuple[
+        Float[Array, "... num_positions vocab_size"], Optional[List[KeyValueCache]]
+    ]:
         kv_caches = hidden_context
 
         # `xs`` is an array of integer indices.
         num_positions = xs.shape[-1]
-        token_embed = nn.Embed(num_embeddings=self.vocab_size,
-                               features=self.d_model,
-                               embedding_init=nn.initializers.normal(0.02))
+        token_embed = nn.Embed(
+            num_embeddings=self.vocab_size,
+            features=self.d_model,
+            embedding_init=nn.initializers.normal(0.02),
+        )
         zs = token_embed(xs)
         if self.use_position_embeddings:
             position_embed = nn.Embed(
                 num_embeddings=self.block_size,
                 features=self.d_model,
-                embedding_init=nn.initializers.normal(0.02))
+                embedding_init=nn.initializers.normal(0.02),
+            )
             zs += position_embed(jnp.arange(num_positions))
 
         for layer_idx in range(self.num_layers):
-
             ff_layer_type = PositionwiseFeedForward
             ff_args = (self.d_model, self.d_ff)
-            ff_kwargs = dict(w2_init_stddev=0.02 *
-                             math.sqrt(2 * self.num_layers))
+            ff_kwargs = dict(w2_init_stddev=0.02 * math.sqrt(2 * self.num_layers))
             if self.num_ff_experts > 1:
-                ff_kwargs = dict(num_experts=self.num_ff_experts,
-                                 num_active_experts=self.num_ff_experts_active,
-                                 sublayer=ff_layer_type,
-                                 sublayer_args=ff_args,
-                                 sublayer_kwargs=ff_kwargs)
+                ff_kwargs = dict(
+                    num_experts=self.num_ff_experts,
+                    num_active_experts=self.num_ff_experts_active,
+                    sublayer=ff_layer_type,
+                    sublayer_args=ff_args,
+                    sublayer_kwargs=ff_kwargs,
+                )
                 ff_args = ()
                 ff_layer_type = NaiveSparseMixtureOfExpertsLayer
 
             ff_layer = nn.vmap(  # Parallelize over sequence positions.
                 ff_layer_type,
-                variable_axes={'params': None},
-                split_rngs={
-                    'params': False,
-                    'expert_choice': True
-                },
-                in_axes=0)(*ff_args, **ff_kwargs)  # type: ignore
-            attn_layer = MultiHeadedAttention(self.num_heads,
-                                              self.d_model,
-                                              dropout=self.dropout)
-            transformer_layer = TransformerBlock(size=self.d_model,
-                                                 self_attn=attn_layer,
-                                                 feed_forward=ff_layer,
-                                                 dropout=self.dropout)
+                variable_axes={"params": None},
+                split_rngs={"params": False, "expert_choice": True},
+                in_axes=0,
+            )(*ff_args, **ff_kwargs)  # type: ignore
+            attn_layer = MultiHeadedAttention(
+                self.num_heads, self.d_model, dropout=self.dropout
+            )
+            transformer_layer = TransformerBlock(
+                size=self.d_model,
+                self_attn=attn_layer,
+                feed_forward=ff_layer,
+                dropout=self.dropout,
+            )
 
             zs, updated_kv_cache = transformer_layer(
                 zs,
                 mask=causal_dependence(num_positions=num_positions),
-                kv_cache=kv_caches[layer_idx] if kv_caches else None)
+                kv_cache=kv_caches[layer_idx] if kv_caches else None,
+            )
             if kv_caches:
                 kv_caches[layer_idx] = updated_kv_cache
 
         zs = nn.LayerNorm()(zs)
-        ys = nn.Dense(self.vocab_size,
-                      use_bias=False,
-                      dtype=self.internal_dtype,
-                      kernel_init=nn.initializers.normal(0.02))(zs)
+        ys = nn.Dense(
+            self.vocab_size,
+            use_bias=False,
+            dtype=self.internal_dtype,
+            kernel_init=nn.initializers.normal(0.02),
+        )(zs)
         return ys, kv_caches

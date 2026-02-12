@@ -140,6 +140,44 @@ class AlternatingDataset(Dataset):
         return x, y
 
 
+class AssociativeRecallDataset(Dataset):
+
+    def __init__(self, block_size: int, chars='abcdefghijklmnopqrstuvwxyz'):
+
+        vocab_size = len(chars)
+        self.stoi = {ch: i for i, ch in enumerate(chars)}
+        self.itos = {i: ch for i, ch in enumerate(chars)}
+        self.vocab_size = vocab_size
+        self.block_size = block_size
+
+    def encode(self, s: str) -> jax.Array:
+        return jnp.array([self.stoi[c] for c in s], dtype=jnp.int32)
+
+    def decode(self, x) -> str:
+        return str([self.itos[int(i)] for i in x])
+
+    def __len__(self):
+        return np.iinfo(np.int32).max
+
+    def __getitem__(
+            self, idx: Int
+    ) -> Tuple[Int[Array, 'block_size'], Int[Array, 'block_size']]:
+        seed = jax.random.PRNGKey(idx)
+        k1, k2, k3 = jax.random.split(seed, 3)
+
+        n_key_pairs = self.vocab_size // 2
+        keys, values = jnp.split(jax.random.permutation(k1, self.vocab_size), 2)
+
+        chosen_pairs = jax.random.uniform(k2, [self.block_size // 2],
+                                          maxval=n_key_pairs,
+                                          dtype=jnp.int32)
+        x = jnp.ravel(
+            jnp.column_stack([keys[chosen_pairs], values[chosen_pairs]]))
+        query_pos = jax.random.uniform(k3,
+                                       dtype=jnp.int32,
+                                       maxval=self.block_size // 2)
+
+
 def character_generator(dataset, batch_size: Optional[int] = None):
     max_idx = len(dataset)
 

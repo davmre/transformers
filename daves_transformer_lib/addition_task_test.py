@@ -1,17 +1,22 @@
-from absl.testing import absltest
-from absl.testing import parameterized
+import typing
 
 import jax
-from jax import numpy as jnp
 import numpy as np
-
-from flax import linen as nn
 import optax
+from absl.testing import absltest, parameterized
+from flax import linen as nn
+from jax import numpy as jnp
 
 from daves_transformer_lib import addition_task
 
 
 class AdditionTests(parameterized.TestCase):
+
+    @staticmethod
+    def _prediction_only(y_pred):
+        if isinstance(y_pred, tuple):
+            return y_pred[0]
+        return y_pred
 
     @parameterized.parameters([{
         'n': 0,
@@ -70,7 +75,8 @@ class AdditionTests(parameterized.TestCase):
         xs, y = next(g)
 
         weights = model.init(key, xs)
-        xxs = model.apply(weights, xs)[..., 0]
+        y_pred = self._prediction_only(model.apply(weights, xs))
+        xxs = jnp.squeeze(typing.cast(jax.Array, y_pred), axis=-1)
         self.assertEqual(xxs.shape, y.shape)
 
     def test_addition_model_trains(self):
@@ -91,8 +97,9 @@ class AdditionTests(parameterized.TestCase):
 
         def loss_fn(weights):
             xs, y = next(g)
-            xxs = model.apply(weights, xs)
-            return jnp.mean(jnp.sum((y - xxs[..., 0])**2, axis=-1), axis=0)
+            y_pred = self._prediction_only(model.apply(weights, xs))
+            xxs = jnp.squeeze(typing.cast(jax.Array, y_pred), axis=-1)
+            return jnp.mean(jnp.sum((y - xxs)**2, axis=-1), axis=0)
 
         @jax.jit
         def train_step(weights, opt_state):

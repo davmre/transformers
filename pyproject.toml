@@ -13,13 +13,13 @@ venvPath = "."
 venv = ".venv"
 typeCheckingMode = "basic"
 include = ["daves_transformer_lib", "experiments"]
-exclude = [".venv", ".gradient", "**/*_test.py"]
+exclude = [".venv", ".gradient"]
 ignore = ["notebooks", "**/*.ipynb"]
 
 [tool.ruff]
 target-version = "py39"
 line-length = 88
-extend-exclude = [".venv", ".gradient", "experiments", "*_test.py"]
+extend-exclude = [".venv", ".gradient", "experiments"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

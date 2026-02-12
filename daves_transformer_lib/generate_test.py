@@ -1,17 +1,13 @@
 import itertools
 
-from absl.testing import absltest
-from absl.testing import parameterized
-
 import jax
-from jax import numpy as jnp
 import numpy as np
-
-from flax import linen as nn
 import optax
+from absl.testing import absltest, parameterized
+from flax import linen as nn
+from jax import numpy as jnp
 
-from daves_transformer_lib import generate
-from daves_transformer_lib import transformer_lib
+from daves_transformer_lib import generate, transformer_lib
 
 
 class IncrementModel(nn.Module):

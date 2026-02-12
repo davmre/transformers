@@ -1,18 +1,14 @@
 import dataclasses
 import typing
 
-from absl.testing import absltest
-from absl.testing import parameterized
-import tree
-
 import jax
-from jax import numpy as jnp
 import numpy as np
-
+import tree
+from absl.testing import absltest, parameterized
 from flax import linen as nn
+from jax import numpy as jnp
 
-from daves_transformer_lib import generate
-from daves_transformer_lib import mamba_lib
+from daves_transformer_lib import generate, mamba_lib
 
 
 class SelectiveSSMTest(parameterized.TestCase):
@@ -51,5 +47,6 @@ class SelectiveSSMTest(parameterized.TestCase):
         ssm = mamba_lib.SelectiveSSM(d_state=4, d_inner=2)
         xs = jax.random.normal(k1, [5, 1])
         params = ssm.init(k2, xs)
-        np.testing.assert_allclose(params['params']['log_neg_Adiag'],
+        log_neg_adiag = typing.cast(jax.Array, params["params"]["log_neg_Adiag"])
+        np.testing.assert_allclose(log_neg_adiag,
                                    np.log([[1., 2., 3., 4.], [1., 2., 3., 4.]]))

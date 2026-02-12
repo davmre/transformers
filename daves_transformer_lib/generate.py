@@ -15,7 +15,7 @@ from daves_transformer_lib.transformer_lib import KeyValueCache
 @functools.partial(jax.jit, static_argnums=(0,))
 def generate_step(
     model,
-    key: jax.random.KeyArray,
+    key: jax.Array,
     weights: PyTree,
     context: Int[Array, "n"],
     context_length: int,
@@ -41,7 +41,7 @@ def generate_step(
     return c, jax.nn.log_softmax(logits), hidden_context
 
 
-def generate(key: jax.random.KeyArray,
+def generate(key: jax.Array,
              model,
              weights: PyTree,
              context: Int[Array, 'num_positions'],
@@ -84,7 +84,7 @@ def generate(key: jax.random.KeyArray,
             yield c
 
 
-def generate_recurrent(key: jax.random.KeyArray,
+def generate_recurrent(key: jax.Array,
                        model,
                        weights: PyTree,
                        context: Array,

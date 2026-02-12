@@ -256,7 +256,7 @@ class GPTModel(nn.Module):
     num_ff_experts: int = 1
     num_ff_experts_active: int = 1
 
-    def rngs(self, key: jax.random.KeyArray):
+    def rngs(self, key: jax.Array):
         dropout_key, expert_choice_key = jax.random.split(key)
         rngs = {"dropout": dropout_key, "expert_choice": expert_choice_key}
         return rngs

@@ -2,17 +2,16 @@ wheel
 toml
 numpy
 
-# Cuda releases are intended for Modal builds. Local Mac installs should use
-# the CPU only version (`pip install --upgrade jax jaxlib`).
---find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-jax[cuda11_pip]>=0.4.8
-jaxlib
+# Local default: CPU JAX/JAXLIB must be kept in lockstep.
+jax==0.4.29
+jaxlib==0.4.29
 
 absl-py>=1.0.0
-flax>=0.4.1
-optax>=0.1.1
-chex
-orbax-checkpoint
+flax==0.8.5
+optax==0.2.4
+chex==0.1.90
+orbax-checkpoint==0.6.4
+etils==1.5.2
 transformers[sentencepiece]
 datasets
 ml_collections

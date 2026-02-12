@@ -1,0 +1,5 @@
+# CUDA-specific JAX wheels for remote GPU environments (for example, Modal).
+# Install with:
+#   pip install -r requirements.txt -r requirements-modal-cuda.txt
+--find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+jax[cuda11_pip]==0.4.29

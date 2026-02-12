@@ -80,7 +80,7 @@ class Trainer:
                                                         items=state)
         return typing.cast(train_state.TrainState, state)
 
-    def forward_loss(self, parameters: PyTree, key: jax.random.KeyArray,
+    def forward_loss(self, parameters: PyTree, key: jax.Array,
                      xs: PyTree, y: PyTree):
         # Apply the model in parallel to each batch element.
         batch_size = xs.shape[0]
@@ -94,7 +94,7 @@ class Trainer:
         return scalar_loss, (xs, y, y_pred, loss)
 
     @functools.partial(jax.jit, static_argnums=0)
-    def step(self, state: train_state.TrainState, key: jax.random.KeyArray,
+    def step(self, state: train_state.TrainState, key: jax.Array,
              xs: PyTree, y: PyTree):
         key, next_key = jax.random.split(key)
         (loss,
@@ -106,7 +106,7 @@ class Trainer:
         state = state.apply_gradients(grads=grad)
         return loss, aux, state, next_key
 
-    def run(self, key: jax.random.KeyArray, state: train_state.TrainState,
+    def run(self, key: jax.Array, state: train_state.TrainState,
             num_steps: int) -> train_state.TrainState:
         writer = tensorboardX.SummaryWriter(logdir=self.log_dir)
 

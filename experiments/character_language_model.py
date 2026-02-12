@@ -44,7 +44,9 @@ _CONFIG = config_flags.DEFINE_config_dict("ml_config", config)
 # non-hidden files? )
 stub = modal.Stub(name="chargpt")
 image = modal.Image.debian_slim().pip_install_from_requirements(
-    "/Users/dave/code/transformers/requirements.txt"
+    "requirements.txt"
+).pip_install_from_requirements(
+    "requirements-modal-cuda.txt"
 )
 volume = modal.NetworkFileSystem.new().persisted("chargpt-checkpoints")
 

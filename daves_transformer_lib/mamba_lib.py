@@ -171,7 +171,7 @@ class MambaLanguageModel(nn.Module):
     d_conv: int
     internal_dtype = jnp.float32
 
-    def rngs(self, key: jax.random.KeyArray):
+    def rngs(self, key: jax.Array):
         return {}
 
     @nn.compact

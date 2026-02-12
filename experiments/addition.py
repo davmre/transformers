@@ -53,7 +53,7 @@ def squared_loss(y, y_pred):
 
 def main(_):
     config = _CONFIG.value
-    key = jax.random.PRNGKey(0)
+    key = jax.random.PRNGKey(config.seed)
 
     data_key, train_key = jax.random.split(key)
 
@@ -68,12 +68,10 @@ def main(_):
                                      batch_size=config.batch_size,
                                      num_bits=config.num_bits)
 
-    trainer = train.Trainer(config=config,
-                            model=model,
-                            optimizer=optax.adam(3e-3),
-                            data_generator=g,
-                            loss_fn=squared_loss)
-    trainer.run(train_key)
+    trainer = train.Trainer(config=config, model=model, data_generator=g, loss_fn=squared_loss)
+    params = trainer.init_parameters(train_key)
+    state = trainer.init(params, optax.adam(3e-3))
+    trainer.run(train_key, state, config.num_train_steps)
 
 
 if __name__ == '__main__':

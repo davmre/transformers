@@ -12,8 +12,8 @@ pythonVersion = "3.9"
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "basic"
-include = ["daves_transformer_lib"]
-exclude = [".venv", ".gradient", "**/*_test.py", "experiments"]
+include = ["daves_transformer_lib", "experiments"]
+exclude = [".venv", ".gradient", "**/*_test.py"]
 ignore = ["notebooks", "**/*.ipynb"]
 
 [tool.ruff]

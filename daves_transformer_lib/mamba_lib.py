@@ -1,16 +1,10 @@
-import math
-from typing import Callable, Dict, List, Optional, Tuple
-
-from jaxtyping import Array
-from jaxtyping import Float
-from jaxtyping import Int
-from jaxtyping import PyTree
+from typing import Optional, Tuple
 
 import jax
-from jax import numpy as jnp
 import numpy as np
-
 from flax import linen as nn
+from jax import numpy as jnp
+from jaxtyping import Array, Float
 
 
 def parallel_scan_op_fn(a, b):
@@ -177,7 +171,6 @@ class MambaLanguageModel(nn.Module):
     @nn.compact
     def __call__(self, xs, hidden_context=None):
         # xs: [L] ints
-        num_positions = xs.shape[-1]
         token_embed = nn.Embed(num_embeddings=self.n_tokens,
                                features=self.d_model,
                                embedding_init=nn.initializers.normal(0.02))

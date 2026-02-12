@@ -1,22 +1,15 @@
-from collections import defaultdict
 import functools
 import os
 import time
 import typing
 
-from jaxtyping import Array
-from jaxtyping import Float
-from jaxtyping import Int
-from jaxtyping import PyTree
-import tensorboardX
-
 import jax
-from jax import numpy as jnp
-
-from flax import linen as nn
-from flax.training import train_state
 import optax
 import orbax.checkpoint
+import tensorboardX
+from flax.training import train_state
+from jax import numpy as jnp
+from jaxtyping import Array, Float, Int, PyTree
 
 
 @functools.partial(jnp.vectorize, signature='(),(k)->()')

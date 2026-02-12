@@ -1,15 +1,10 @@
-from enum import Enum
-import math
-from sys import float_info
-from sys import int_info
-from typing import Callable, List
+from typing import Callable
 
 import jax
-from jax import numpy as jnp
 import numpy as np
-
 from flax import linen as nn
 from flax import struct
+from jax import numpy as jnp
 
 from daves_transformer_lib import transformer_lib
 

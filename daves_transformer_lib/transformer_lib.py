@@ -1,13 +1,11 @@
-import dataclasses
-import functools
 import math
-from typing import Callable, Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 import jax
 from flax import linen as nn
 from flax import struct
 from jax import numpy as jnp
-from jaxtyping import Array, Float, Int, PyTree
+from jaxtyping import Array, Float, Int
 
 
 @struct.dataclass
@@ -166,8 +164,6 @@ class MultiHeadedAttention(nn.Module):
         mask: Optional[Float[Array, "num_positions num_positions"]] = None,
         kv_cache: Optional[KeyValueCache] = None,
     ) -> Tuple[Float[Array, "... num_positions d_model"], Optional[KeyValueCache]]:
-        num_input_positions = x.shape[-2]
-
         query = self.q_linear(x)
         key_value = self.kv_linear(x)
         if kv_cache is not None:

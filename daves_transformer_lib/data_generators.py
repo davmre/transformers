@@ -1,13 +1,10 @@
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 
-from jaxtyping import Array
-from jaxtyping import Int
-
 import jax
-from jax import numpy as jnp
 import numpy as np
+from jax import numpy as jnp
+from jaxtyping import Array, Int
 
 
 class Dataset(ABC):
@@ -162,26 +159,34 @@ class AssociativeRecallDataset(Dataset):
     def __getitem__(
             self, idx: Int
     ) -> Tuple[Int[Array, 'block_size'], Int[Array, 'block_size']]:
-        seed = jax.random.PRNGKey(idx)
-        k1, k2, k3 = jax.random.split(seed, 3)
+        """
+        Partial implementation kept for future completion:
 
-        n_key_pairs = self.vocab_size // 2
-        keys, values = jnp.split(jax.random.permutation(k1, self.vocab_size), 2)
+            seed = jax.random.PRNGKey(idx)
+            k1, k2, k3 = jax.random.split(seed, 3)
 
-        chosen_pairs = jax.random.uniform(k2, [self.block_size // 2],
-                                          maxval=n_key_pairs,
-                                          dtype=jnp.int32)
-        x = jnp.ravel(
-            jnp.column_stack([keys[chosen_pairs], values[chosen_pairs]]))
-        query_pos = jax.random.uniform(k3,
-                                       dtype=jnp.int32,
-                                       maxval=self.block_size // 2)
+            n_key_pairs = self.vocab_size // 2
+            keys, values = jnp.split(jax.random.permutation(k1, self.vocab_size), 2)
+
+            chosen_pairs = jax.random.uniform(k2, [self.block_size // 2],
+                                              maxval=n_key_pairs,
+                                              dtype=jnp.int32)
+            x = jnp.ravel(
+                jnp.column_stack([keys[chosen_pairs], values[chosen_pairs]]))
+            query_pos = jax.random.uniform(k3,
+                                           dtype=jnp.int32,
+                                           maxval=self.block_size // 2)
+        """
+        raise NotImplementedError(
+            "AssociativeRecallDataset.__getitem__ is not implemented.")
 
 
 def character_generator(dataset, batch_size: Optional[int] = None):
     max_idx = len(dataset)
 
-    dataset_get = lambda idx: dataset[idx]
+    def dataset_get(idx):
+        return dataset[idx]
+
     dataset_get = jax.vmap(dataset_get) if batch_size else dataset_get
 
     while True:

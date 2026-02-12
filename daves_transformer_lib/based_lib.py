@@ -1,11 +1,9 @@
-import math
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import jax
-import numpy as np
 from flax import linen as nn
 from jax import numpy as jnp
-from jaxtyping import Array, Float, Int, PyTree
+from jaxtyping import Array, Float
 
 ###############################################################################
 # Work-in-progress implementation of the BASED recipe for linear attention:

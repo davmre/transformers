@@ -1,13 +1,9 @@
 import functools
 from typing import List, Optional, Tuple
 
-from jaxtyping import Array
-from jaxtyping import Float
-from jaxtyping import Int
-from jaxtyping import PyTree
-
 import jax
 from jax import numpy as jnp
+from jaxtyping import Array, Float, Int, PyTree
 
 from daves_transformer_lib.transformer_lib import KeyValueCache
 

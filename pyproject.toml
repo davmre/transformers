@@ -8,4 +8,25 @@ sections=["FUTURE","STDLIB","THIRDPARTY","JAX","JAX_ECOSYSTEM","FIRSTPARTY","LOC
 style = "google"
 
 [tool.pyright]
-ignore = ["notebooks", "**ipynb"]
+pythonVersion = "3.9"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "basic"
+include = ["daves_transformer_lib"]
+exclude = [".venv", ".gradient", "**/*_test.py", "experiments"]
+ignore = ["notebooks", "**/*.ipynb"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+extend-exclude = [".venv", ".gradient", "experiments", "*_test.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["F722", "F821"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["daves_transformer_lib"]
+
+[tool.ruff.lint.per-file-ignores]
+"*_test.py" = ["F401", "F841"]

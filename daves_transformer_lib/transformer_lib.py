@@ -1,11 +1,14 @@
 import math
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Callable, Dict, List, Optional, Tuple, Type
 
+import einx
 import jax
+import numpy as np
 from flax import linen as nn
-from flax import struct
+from flax import nnx, struct
+from flax.typing import Dtype, Initializer
 from jax import numpy as jnp
-from jaxtyping import Array, Float, Int
+from jaxtyping import Array, Bool, Float, Int
 
 
 @struct.dataclass
@@ -137,10 +140,12 @@ class NaiveSparseMixtureOfExpertsLayer(nn.Module):
         return jnp.sum(gate_probs[..., jnp.newaxis] * results, axis=0)
 
 
-class MultiHeadedAttention(nn.Module):
+class MultiHeadedAttentionOld(nn.Module):
     h: int
     d_model: int
     dropout: nn.Module
+
+    # def __init__(self, d_model: int, num_heads: int, )
 
     def setup(self):
         self.d_k = self.d_model // self.h
@@ -195,7 +200,7 @@ class MultiHeadedAttention(nn.Module):
         return x, kv_cache
 
 
-class PositionwiseFeedForward(nn.Module):
+class PositionwiseFeedForwardOld(nn.Module):
     "Implements FFN equation."
 
     d_model: int
@@ -215,7 +220,7 @@ class PositionwiseFeedForward(nn.Module):
         return self.w_2(jax.nn.gelu(self.w_1(x)))
 
 
-class TransformerBlock(nn.Module):
+class TransformerBlockOld(nn.Module):
     size: int
     self_attn: nn.Module
     feed_forward: nn.Module
@@ -239,7 +244,7 @@ class TransformerBlock(nn.Module):
         return x, kv_cache
 
 
-class GPTModel(nn.Module):
+class TransformerLanguageModelOld(nn.Module):
     vocab_size: int
     block_size: int
     num_heads: int
@@ -295,7 +300,7 @@ class GPTModel(nn.Module):
             zs += position_embed(jnp.arange(num_positions))
 
         for layer_idx in range(self.num_layers):
-            ff_layer_type = PositionwiseFeedForward
+            ff_layer_type = PositionwiseFeedForwardOld
             ff_args = (self.d_model, self.d_ff)
             ff_kwargs = dict(w2_init_stddev=0.02 * math.sqrt(2 * self.num_layers))
             if self.num_ff_experts > 1:
@@ -315,10 +320,10 @@ class GPTModel(nn.Module):
                 split_rngs={"params": False, "expert_choice": True},
                 in_axes=0,
             )(*ff_args, **ff_kwargs)  # type: ignore
-            attn_layer = MultiHeadedAttention(
+            attn_layer = MultiHeadedAttentionOld(
                 self.num_heads, self.d_model, dropout=self.dropout
             )
-            transformer_layer = TransformerBlock(
+            transformer_layer = TransformerBlockOld(
                 size=self.d_model,
                 self_attn=attn_layer,
                 feed_forward=ff_layer,

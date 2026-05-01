@@ -12,6 +12,7 @@ from daves_transformer_lib import generate, transformer_lib
 
 class IncrementModel(nn.Module):
     """Dummy model that puts (almost) all mass on `input + 1`."""
+
     vocab_size: int
     block_size: int
 
@@ -21,59 +22,57 @@ class IncrementModel(nn.Module):
     @nn.compact
     def __call__(self, xs, hidden_context=None):
         desired_ys = (xs + 1) % self.vocab_size
-        logits = 10 * jax.nn.one_hot(
-            desired_ys, num_classes=self.vocab_size, axis=-1)
+        logits = 10 * jax.nn.one_hot(desired_ys, num_classes=self.vocab_size, axis=-1)
         return logits, hidden_context
 
 
 class GenerateTests(parameterized.TestCase):
-
-    @parameterized.parameters([{'block_size': 1}, {'block_size': 100}])
+    @parameterized.parameters([{"block_size": 1}, {"block_size": 100}])
     def test_generate_deterministic(self, block_size):
         key = jax.random.PRNGKey(0)
         xs = jnp.array([0])
 
         model = IncrementModel(vocab_size=4, block_size=block_size)
         weights = model.init(jax.random.PRNGKey(0), xs)
-        tokens = generate.generate(key,
-                                   model=model,
-                                   weights=weights,
-                                   context=xs,
-                                   block_size=model.block_size)
-        self.assertSequenceEqual(list(itertools.islice(tokens, 0, 10)),
-                                 [1, 2, 3, 0, 1, 2, 3, 0, 1, 2])
+        tokens = generate.generate(
+            key, model=model, weights=weights, context=xs, block_size=model.block_size
+        )
+        self.assertSequenceEqual(
+            list(itertools.islice(tokens, 0, 10)), [1, 2, 3, 0, 1, 2, 3, 0, 1, 2]
+        )
 
-    @parameterized.parameters([
-        {
-            'num_layers': 1,
-            'limit_to_context_length': False
-        },
-        {
-            # For multilayer networks, the key-value cache *does* subtly change
-            # the generation probabilities by implicitly extending the context
-            # length: activations at the beginning of the cache will themselves
-            # depend on older activations outside of the current context. So we
-            # test equality only up to the context length.
-            'num_layers': 2,
-            'limit_to_context_length': True
-        }
-    ])
-    def test_kv_cache_doesnt_change_generation(self, num_layers,
-                                               limit_to_context_length):
+    @parameterized.parameters(
+        [
+            {"num_layers": 1, "limit_to_context_length": False},
+            {
+                # For multilayer networks, the key-value cache *does* subtly change
+                # the generation probabilities by implicitly extending the context
+                # length: activations at the beginning of the cache will themselves
+                # depend on older activations outside of the current context. So we
+                # test equality only up to the context length.
+                "num_layers": 2,
+                "limit_to_context_length": True,
+            },
+        ]
+    )
+    def test_kv_cache_doesnt_change_generation(
+        self, num_layers, limit_to_context_length
+    ):
         key = jax.random.PRNGKey(0)
         xs = jnp.array([0])
 
-        model = transformer_lib.GPTModel(
+        model = transformer_lib.TransformerLanguageModelOld(
             vocab_size=4,
             num_heads=1,
             num_layers=num_layers,
             d_model=3,
             d_ff=6,
             block_size=5,
-            dropout=nn.Dropout(rate=0., deterministic=True),
+            dropout=nn.Dropout(rate=0.0, deterministic=True),
             # TODO: position embeddings shouldn't
             # affect how the cache works.
-            use_position_embeddings=False)
+            use_position_embeddings=False,
+        )
         weights = model.init(jax.random.PRNGKey(0), xs)
         tokens_with_lps_no_cache = generate.generate(
             key,
@@ -81,16 +80,14 @@ class GenerateTests(parameterized.TestCase):
             weights=weights,
             context=xs,
             block_size=model.block_size,
-            include_logprobs=True)
+            include_logprobs=True,
+        )
 
-        tokens_with_lps = generate.generate_recurrent(key,
-                                                      model=model,
-                                                      weights=weights,
-                                                      context=xs,
-                                                      include_logprobs=True)
+        tokens_with_lps = generate.generate_recurrent(
+            key, model=model, weights=weights, context=xs, include_logprobs=True
+        )
 
-        for i in range(model.block_size +
-                       (0 if limit_to_context_length else 10)):
+        for i in range(model.block_size + (0 if limit_to_context_length else 10)):
             t_nc, lp_nc = next(tokens_with_lps_no_cache)
             t, lp = next(tokens_with_lps)
             self.assertEqual(t, t_nc)
